@@ -8,16 +8,39 @@ using System.Windows.Forms;
 using ZXing;
 using ZXing.Common;
 
+using System.Net.Http;
+using System.Web;
+using System.IO;
+using System.Drawing.Imaging;
+using SkiaSharp;
+
 namespace ConsoleApp4
 {
+    public enum PushEnum
+    {
+        ServerChan,
+        PlusPlus ,
+    }
     internal class Program
     {
-        private static string _lastQrContent = string.Empty;
+        public static string _lastQrContent = string.Empty;
+
+
+
+
+        static string GetQrFilePath()
+        {
+            string projectRoot = Path.GetFullPath(
+                                       Path.Combine(AppDomain.CurrentDomain.BaseDirectory, @"..\..\..\"));
+            string qrPath = Path.Combine(projectRoot, "qr_cropped.jpg");
+            return qrPath;
+        }
+
         [STAThread] // .NET Framework 下用 Windows Forms 功能推荐加这个
         static void Main(string[] args)
         {
             Console.WriteLine("=== .NET Framework 4.8 二维码监控工具 ===");
-            Console.WriteLine("功能：每隔3秒截屏识别屏幕中的二维码");
+            Console.WriteLine("功能：每隔6秒截屏识别屏幕中的二维码");
             Console.WriteLine("按 Ctrl+C 结束程序\n");
 
             // 初始化 ZXing 二维码解码器（针对 QR Code 优化）
@@ -50,6 +73,95 @@ namespace ConsoleApp4
                             {
                                 _lastQrContent = currentQr;
                                 ShowSuccessMessage(currentQr);
+
+
+                                // 1. 计算二维码矩形
+                                if (result?.ResultPoints == null || result.ResultPoints.Length < 3) return;
+
+                                float minX = result.ResultPoints.Min(p => p.X);
+                                float maxX = result.ResultPoints.Max(p => p.X);
+                                float minY = result.ResultPoints.Min(p => p.Y);
+                                float maxY = result.ResultPoints.Max(p => p.Y);
+                                int x = Math.Max(0, (int)minX);
+                                int y = Math.Max(0, (int)minY);
+                                int w = Math.Min(screenShot.Width - x, (int)(maxX - minX));
+                                int h = Math.Min(screenShot.Height - y, (int)(maxY - minY));
+
+                                // 2. System.Drawing.Bitmap -> SKBitmap
+                                SKBitmap fullBmp = null;
+                                MemoryStream ms = new MemoryStream();
+                                try
+                                {
+                                    //不能直接把 ImageFormat.Png 改成 ImageFormat.Jpeg 就完事，原因有两点：
+                                    //JPG 不支持透明通道如果原始截图里带有透明区域（比如 WPF 窗口、分层窗口），System.Drawing 在保存时会抛 ArgumentException：“A generic error occurred in GDI+”。
+                                    //JPG 质量参数  只是格式枚举，不能指定压缩质量；默认质量往往只有 75，且不可控
+
+
+                                    screenShot.Save(ms, ImageFormat.Png);
+                                    ms.Position = 0;
+                                    fullBmp = SKBitmap.Decode(ms);
+                                }
+                                finally
+                                {
+                                    ms.Dispose();
+                                }
+
+                                // 3. 裁剪二维码区域
+                                SKBitmap qrBmp = new SKBitmap(w, h);
+                                SKCanvas canvas = null;
+                                try
+                                {
+                                    canvas = new SKCanvas(qrBmp);
+                                    canvas.DrawBitmap(fullBmp,
+                                        new SKRect(x, y, x + w, y + h),
+                                        new SKRect(0, 0, w, h));
+                                }
+                                finally
+                                {
+                                    if (canvas != null) canvas.Dispose();
+                                }
+
+                                // 4. 缩放
+                                float ratio = 900f / w;
+                                int newW = (int)(w * ratio);
+                                int newH = (int)(h * ratio);
+                                SKBitmap resized = null;
+                                try
+                                {
+                                    resized = qrBmp.Resize(new SKImageInfo(newW, newH), SKFilterQuality.High);
+                                }
+                                finally
+                                {
+                                    qrBmp.Dispose();
+                                    fullBmp.Dispose();
+                                }
+
+                                // 5. 编码成 JPG
+                                SKImage qrImage = null;
+                                
+                                try
+                                {
+                                    qrImage = SKImage.FromBitmap(resized);
+
+                                    //获取二维码截图地址 
+                                    string qrPath = GetQrFilePath();
+                                    using (var fs = new FileStream(qrPath, FileMode.Create, FileAccess.Write))
+                                    {
+                                        qrImage.Encode(SKEncodedImageFormat.Jpeg, 80).SaveTo(fs);
+                                    }
+                                        
+                                   
+
+                                    // 先上传到七牛云然后 post请求你到plusplus
+                                    PushPlusHelper.PushImageAsync("检测到新二维码",GetQrFilePath());
+                                }
+                                finally
+                                {
+                                    if (qrImage != null) qrImage.Dispose();
+                                    if (resized != null) resized.Dispose();
+                                    
+                                }
+
                             }
                             else
                             {
@@ -68,7 +180,7 @@ namespace ConsoleApp4
                 }
 
                 // 间隔3秒
-                System.Threading.Thread.Sleep(3000);
+                System.Threading.Thread.Sleep(6000);
             }
         }
 
