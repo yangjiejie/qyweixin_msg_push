@@ -5,11 +5,10 @@
 /obj
 
 /doc
-/Apk
 
-/AssetBundles
 
-/res_cdn
+
+
 
 /Assets/StreamingAssets
 
@@ -18,9 +17,14 @@
 /.vs
 
 ConsoleApp4/obj
+
+ConsoleApp4/bin/Debug/ConsoleApp4.exe
+ConsoleApp4/bin/Debug/ConsoleApp4.exe.config
+ConsoleApp4/bin/Debug/ConsoleApp4.pdb
+
 /UserSettings
 
-/UnityGenerated
+
 
 /Library
 
@@ -28,7 +32,7 @@ ConsoleApp4/obj
 
  
 
-# ----[ Visual Studio / MonoDevelop generated ]------- #
+
 
  
 
@@ -56,20 +60,6 @@ ExportedObj/
 
 
 
-# -------------[ OS generated ]------------------------ #
 
-.DS_Store
 
-.DS_Store?
 
-._*
-
-.Spotlight-V100
-
-.Trashes
-
-Icon?
-
-ehthumbs.db
-
-Thumbs.db
