@@ -1,36 +1,18 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using System.Windows.Forms;
 using ZXing;
 using ZXing.Common;
-
-using System.Net.Http;
-using System.Web;
 using System.IO;
 using System.Drawing.Imaging;
 using SkiaSharp;
 
 namespace ConsoleApp4
 {
-    public enum PushEnum
-    {
-        ServerChan,
-        PlusPlus,
-    }
     internal class Program
     {
-        public static string _lastQrContent = string.Empty;
-
-
-
-
-        
-
-           [STAThread] // .NET Framework 下用 Windows Forms 功能推荐加这个
+        public static string _lastQrContent = string.Empty;        
         static void Main(string[] args)
         {
             Console.WriteLine("=== .NET Framework 4.8 二维码监控工具 ===");

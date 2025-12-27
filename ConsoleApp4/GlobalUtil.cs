@@ -1,10 +1,5 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.IO;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-
 public static class GlobalUtil
 {
     /// <summary>
@@ -19,6 +14,10 @@ public static class GlobalUtil
         string qrPath = Path.Combine(projectRoot, fileName);
         return qrPath;
     }
+    /// <summary>
+    /// 获取工作区目录 
+    /// </summary>
+    /// <returns></returns>
     public static string GetWorkDirPath()
     {
         string projectRoot = Path.GetFullPath(
