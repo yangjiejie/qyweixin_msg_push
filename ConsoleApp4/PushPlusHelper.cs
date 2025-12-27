@@ -33,32 +33,32 @@ public static class PushPlusHelper
             {
                 throw new Exception("七牛云上传失败，返回空URL");
             }
+            Console.WriteLine(imgUrl);
+            //// 2. 构造HTML内容（带缓存戳，避免微信缓存旧图）
+            //string cacheStamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(); // 经典时间戳
+            //string htmlContent = string.Format(
+            //    "<img src=\"{0}?t={1}\" alt=\"图片\" style=\"max-width:{2};display:block;margin:0 auto;\"/>" +
+            //    "<p style='color:#999;font-size:14px;text-align:center;'>点击图片可放大查看</p>",
+            //    imgUrl, cacheStamp, imgWidth);
 
-            // 2. 构造HTML内容（带缓存戳，避免微信缓存旧图）
-            string cacheStamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(); // 经典时间戳
-            string htmlContent = string.Format(
-                "<img src=\"{0}?t={1}\" alt=\"图片\" style=\"max-width:{2};display:block;margin:0 auto;\"/>" +
-                "<p style='color:#999;font-size:14px;text-align:center;'>点击图片可放大查看</p>",
-                imgUrl, cacheStamp, imgWidth);
+            //// 3. 构造推送表单
+            //var formData = new Dictionary<string, string>();
+            //formData.Add("token", AppConfig.plusPlusKey);
+            //formData.Add("title", title);
+            //formData.Add("content", htmlContent);
+            //formData.Add("template", "html"); // 强制用HTML模板（避免Markdown兼容问题）
 
-            // 3. 构造推送表单
-            var formData = new Dictionary<string, string>();
-            formData.Add("token", AppConfig.plusPlusKey);
-            formData.Add("title", title);
-            formData.Add("content", htmlContent);
-            formData.Add("template", "html"); // 强制用HTML模板（避免Markdown兼容问题）
+            //FormUrlEncodedContent formContent = new FormUrlEncodedContent(formData);
 
-            FormUrlEncodedContent formContent = new FormUrlEncodedContent(formData);
-
-            // 4. 发送POST请求（经典using嵌套）
-            using (HttpResponseMessage response = await _httpClient.PostAsync("https://www.pushplus.plus/send", formContent))
-            {
-                using (HttpContent content = response.Content)
-                {
-                    string result = await content.ReadAsStringAsync();
-                    Console.WriteLine("[PushPlus] 推送结果：" + result);
-                }
-            }
+            //// 4. 发送POST请求（经典using嵌套）
+            //using (HttpResponseMessage response = await _httpClient.PostAsync("https://www.pushplus.plus/send", formContent))
+            //{
+            //    using (HttpContent content = response.Content)
+            //    {
+            //        string result = await content.ReadAsStringAsync();
+            //        Console.WriteLine("[PushPlus] 推送结果：" + result);
+            //    }
+            //}
         }
         catch (Exception ex)
         {

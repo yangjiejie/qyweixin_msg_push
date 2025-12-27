@@ -19,7 +19,7 @@ namespace ConsoleApp4
     public enum PushEnum
     {
         ServerChan,
-        PlusPlus ,
+        PlusPlus,
     }
     internal class Program
     {
@@ -28,15 +28,9 @@ namespace ConsoleApp4
 
 
 
-        static string GetQrFilePath()
-        {
-            string projectRoot = Path.GetFullPath(
-                                       Path.Combine(AppDomain.CurrentDomain.BaseDirectory, @"..\..\..\"));
-            string qrPath = Path.Combine(projectRoot, "qr_cropped.jpg");
-            return qrPath;
-        }
+        
 
-        [STAThread] // .NET Framework 下用 Windows Forms 功能推荐加这个
+           [STAThread] // .NET Framework 下用 Windows Forms 功能推荐加这个
         static void Main(string[] args)
         {
             Console.WriteLine("=== .NET Framework 4.8 二维码监控工具 ===");
@@ -82,10 +76,11 @@ namespace ConsoleApp4
                                 float maxX = result.ResultPoints.Max(p => p.X);
                                 float minY = result.ResultPoints.Min(p => p.Y);
                                 float maxY = result.ResultPoints.Max(p => p.Y);
-                                int x = Math.Max(0, (int)minX);
-                                int y = Math.Max(0, (int)minY);
-                                int w = Math.Min(screenShot.Width - x, (int)(maxX - minX));
-                                int h = Math.Min(screenShot.Height - y, (int)(maxY - minY));
+                                int expandPixel = 30; // 这里需要考虑一定的阈值，不然截出来的二维码可能边缘不全 
+                                int x = Math.Max(0, (int)minX - expandPixel);
+                                int y = Math.Max(0, (int)minY -  expandPixel);
+                                int w = Math.Min(screenShot.Width - x, (int)(maxX - minX) + 2 * expandPixel);
+                                int h = Math.Min(screenShot.Height - y, (int)(maxY - minY) + 2 * expandPixel);
 
                                 // 2. System.Drawing.Bitmap -> SKBitmap
                                 SKBitmap fullBmp = null;
@@ -138,28 +133,27 @@ namespace ConsoleApp4
 
                                 // 5. 编码成 JPG
                                 SKImage qrImage = null;
-                                
+
                                 try
                                 {
                                     qrImage = SKImage.FromBitmap(resized);
 
                                     //获取二维码截图地址 
-                                    string qrPath = GetQrFilePath();
+                                    string qrPath = GlobalUtil.GetQrFilePath("qr_cropped.jpg");
                                     using (var fs = new FileStream(qrPath, FileMode.Create, FileAccess.Write))
                                     {
                                         qrImage.Encode(SKEncodedImageFormat.Jpeg, 80).SaveTo(fs);
                                     }
-                                        
-                                   
+                                    Console.WriteLine($"开始推送给企业微信{qrPath}");
+                                    _= CompanyWeChatGroupAiSendMg.PushImage(qrPath);
 
-                                    // 先上传到七牛云然后 post请求你到plusplus
-                                    PushPlusHelper.PushImageAsync("检测到新二维码",GetQrFilePath());
+                                 
                                 }
                                 finally
                                 {
                                     if (qrImage != null) qrImage.Dispose();
                                     if (resized != null) resized.Dispose();
-                                    
+
                                 }
 
                             }
