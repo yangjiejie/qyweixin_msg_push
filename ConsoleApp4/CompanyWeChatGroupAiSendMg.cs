@@ -9,22 +9,7 @@ using Newtonsoft.Json;
 public static class CompanyWeChatGroupAiSendMg
 {
     // 替换为你的机器人Webhook地址
-    private const string RobotUrl = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=a3d61999-6f8d-4b13-9156-fab5dafe9225";
-
-    static async Task Main2()
-    {
-        // 推送文字消息
-        var textMsg = new
-        {
-            msgtype = "text",
-            text = new { content = "老婆，这是测试消息~" }
-        };
-        // await PushMessage(textMsg);
-        await PushImage((GlobalUtil.GetQrFilePath("qr_cropped.jpg")));
-        Console.ReadKey();
-    }
-
-   
+    private static string RobotUrl = "";
 
     public static async  Task PushImage(string imagePath)
     {
@@ -81,39 +66,23 @@ public static class CompanyWeChatGroupAiSendMg
 
 
     /// <summary>
-    /// 通用的消息推送方法（复用）
-    /// </summary>
-    static async Task PushMessage(object msg,int msg2=  2)
-    {
-        using (var client = new HttpClient())
-        {
-            // 设置超时时间，避免卡壳
-            client.Timeout = TimeSpan.FromSeconds(10);
-
-            // 序列化JSON（确保中文不转义）
-            string json = JsonConvert.SerializeObject(msg, new JsonSerializerSettings
-            {
-                StringEscapeHandling = StringEscapeHandling.EscapeNonAscii
-            });
-
-            // 构造请求内容
-            var content = new StringContent(json, Encoding.UTF8, "application/json");
-
-            // 发送POST请求
-            var response = await client.PostAsync(RobotUrl, content);
-
-            // 打印响应结果，方便排查
-            string responseContent = await response.Content.ReadAsStringAsync();
-            Console.WriteLine($"接口响应：{responseContent}");
-        }
-    }
-    /// <summary>
     /// 发送存文本测试 
     /// </summary>
     /// <param name="msg"></param>
     /// <returns></returns>
     static async Task PushMessage(object msg)
     {
+        var path = Path.Combine( GlobalUtil.GetWorkDirPath(), "CompanyWeChatRobotWebHook.txt");
+        if(!File.Exists(path))
+        {
+            Console.WriteLine("缺少配置文件CompanyWeChatRobotWebHook.txt，请找到你微信群的机器人webhook链接");
+            return;
+        }
+        else
+        {
+            RobotUrl =  File.ReadAllText(path);
+        }
+
         using (var client = new HttpClient())
         {
             var json = JsonConvert.SerializeObject(msg);

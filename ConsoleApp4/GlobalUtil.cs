@@ -19,4 +19,11 @@ public static class GlobalUtil
         string qrPath = Path.Combine(projectRoot, fileName);
         return qrPath;
     }
+    public static string GetWorkDirPath()
+    {
+        string projectRoot = Path.GetFullPath(
+                                  Path.Combine(AppDomain.CurrentDomain.BaseDirectory, @"..\..\..\"));
+        
+        return  projectRoot.Replace("\\","/");
+    }
 }
