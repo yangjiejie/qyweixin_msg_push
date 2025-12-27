@@ -1,0 +1,1 @@
+1.需要下载一个企业微信，然后再你的企业群里面设置一个机器人，记录一下机器人的webhook，这个key不要直接在代码中引用，我们放在CompanyWeChatRobotWebHook.txt中，内容就是webhook的值 属于字符串类型
