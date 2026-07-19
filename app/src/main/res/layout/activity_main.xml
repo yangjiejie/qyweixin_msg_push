@@ -28,6 +28,19 @@
             android:textSize="20sp"
             android:textStyle="bold" />
 
+        <!-- 设置按钮 - 右三 -->
+        <ImageButton
+            android:id="@+id/btnSettings"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_gravity="end|center_vertical"
+            android:layout_marginEnd="104dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="设置"
+            android:src="@drawable/ic_settings"
+            android:scaleType="centerInside"
+            android:padding="8dp" />
+
         <!-- 多选按钮 - 右二 -->
         <ImageButton
             android:id="@+id/btnMultiSelect"
@@ -216,6 +229,15 @@
             android:layout_height="40dp"
             android:text="解密恢复"
             android:textColor="@color/accent"
+            android:textSize="14sp" />
+
+        <Button
+            android:id="@+id/btnBatchDelete"
+            style="@style/Widget.MaterialComponents.Button.TextButton"
+            android:layout_width="wrap_content"
+            android:layout_height="40dp"
+            android:text="删除"
+            android:textColor="#FF5252"
             android:textSize="14sp" />
     </LinearLayout>
 
