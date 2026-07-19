@@ -1,6 +1,8 @@
 package com.videowatch.app
 
 import android.Manifest
+import android.app.AlertDialog
+import android.content.ContentUris
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.MediaScannerConnection
@@ -8,11 +10,13 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.provider.Settings
 import android.view.View
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.result.IntentSenderRequest
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
@@ -199,6 +203,20 @@ class MainActivity : AppCompatActivity() {
 
     private fun queryMediaStoreVideos(): List<File> {
         val files = mutableListOf<File>()
+        // 收集私有目录中所有视频文件的"原始文件名"
+        // 1) xxx.mp4.enc → 对应原始文件 xxx.mp4
+        // 2) xxx.mp4（直接导入的） → 对应原始文件 xxx.mp4
+        val privateFileNames = mutableSetOf<String>()
+        if (appVideoDir.exists()) {
+            appVideoDir.listFiles()?.forEach { f ->
+                if (f.name.endsWith(".enc")) {
+                    privateFileNames.add(f.name.removeSuffix(".enc"))
+                } else if (!f.isDirectory && !f.name.startsWith(".")) {
+                    // 导入但未加密的视频副本，也需要在相册中隐藏原文件
+                    privateFileNames.add(f.name)
+                }
+            }
+        }
         try {
             val projection = arrayOf(
                 MediaStore.Video.Media.DATA,
@@ -216,8 +234,11 @@ class MainActivity : AppCompatActivity() {
                 val nameIndex = it.getColumnIndexOrThrow(MediaStore.Video.Media.DISPLAY_NAME)
                 while (it.moveToNext()) {
                     val path = it.getString(dataIndex)
+                    val name = it.getString(nameIndex)
                     if (path != null) {
                         val file = File(path)
+                        // 如果该视频在私有目录中已有副本（加密或直接导入），从相册中隐藏
+                        if (name != null && privateFileNames.contains(name)) continue
                         if (file.exists() && file.isFile && isVideoOrEncFile(file)) {
                             files.add(file)
                         }
@@ -297,9 +318,22 @@ class MainActivity : AppCompatActivity() {
         importVideosFromUris(uris)
     }
 
+    private val deleteIntentLauncher = registerForActivityResult(
+        ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        if (result.resultCode == RESULT_OK) {
+            Toast.makeText(this, "原文件已删除", Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(this, "未删除原文件，已在相册中隐藏", Toast.LENGTH_SHORT).show()
+        }
+        loadAllVideos()
+    }
+
     private fun importVideosFromUris(uris: List<Uri>) {
         lifecycleScope.launch(Dispatchers.IO) {
             var imported = 0
+            // 记录成功导入的视频在 MediaStore 中的 ID（用于后续删除）
+            val importedMediaIds = mutableListOf<Long>()
             for (uri in uris) {
                 try {
                     val name = getFileName(uri) ?: "video_${System.currentTimeMillis()}.mp4"
@@ -310,6 +344,11 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
                     imported++
+                    // 提取 MediaStore ID
+                    val mediaId = extractMediaStoreId(uri)
+                    if (mediaId != null) {
+                        importedMediaIds.add(mediaId)
+                    }
                 } catch (e: Exception) {
                     // 跳过失败的文件
                 }
@@ -319,6 +358,101 @@ class MainActivity : AppCompatActivity() {
                 loadAllVideos()
                 // 切换到加密视频tab
                 binding.tabLayout.getTabAt(1)?.select()
+
+                // 导入完成后询问是否删除原文件
+                if (imported > 0 && importedMediaIds.isNotEmpty()) {
+                    showDeleteOriginalDialog(importedMediaIds)
+                }
+            }
+        }
+    }
+
+    /**
+     * 从 SAF content URI 提取 MediaStore 视频 ID
+     * 支持: content://media/external/video/123
+     *       content://com.android.providers.media.documents/document/video%3A123
+     */
+    private fun extractMediaStoreId(uri: Uri): Long? {
+        return try {
+            val lastSegment = uri.lastPathSegment ?: return null
+            // 尝试直接作为纯数字 ID
+            val directId = lastSegment.toLongOrNull()
+            if (directId != null) return directId
+
+            // 处理 DocumentsProvider 格式: video%3A123 或 video:123
+            val docId = try {
+                DocumentsContract.getDocumentId(uri)
+            } catch (_: Exception) { lastSegment }
+            // URL 解码 %3A → :
+            val decoded = Uri.decode(docId)
+            val parts = decoded.split(":")
+            if (parts.size == 2 && parts[0] == "video") {
+                parts[1].toLongOrNull()
+            } else {
+                null
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
+     * 提示用户是否删除已导入的原文件
+     */
+    private fun showDeleteOriginalDialog(mediaIds: List<Long>) {
+        AlertDialog.Builder(this)
+            .setTitle("删除原文件")
+            .setMessage("视频已成功导入到加密目录，是否删除相册中的原文件以释放空间？")
+            .setPositiveButton("删除") { _, _ ->
+                deleteOriginalFilesById(mediaIds)
+            }
+            .setNegativeButton("保留", null)
+            .show()
+    }
+
+    /**
+     * 通过 MediaStore ID 删除原始视频文件
+     * Android 11+ 使用 createDeleteRequest 弹出系统确认框（一个弹窗批量处理）
+     */
+    private fun deleteOriginalFilesById(mediaIds: List<Long>) {
+        if (mediaIds.isEmpty()) {
+            Toast.makeText(this, "无法识别原文件路径，已在相册中隐藏", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val uris = mediaIds.map { id ->
+            ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            // Android 11+：createDeleteRequest 弹系统确认框，结果在 deleteIntentLauncher 回调中处理
+            val pendingIntent = try {
+                MediaStore.createDeleteRequest(contentResolver, uris)
+            } catch (_: Exception) { null }
+            if (pendingIntent != null) {
+                deleteIntentLauncher.launch(
+                    IntentSenderRequest.Builder(pendingIntent.intentSender).build()
+                )
+            } else {
+                Toast.makeText(this, "无法删除原文件，已在相册中隐藏", Toast.LENGTH_SHORT).show()
+                loadAllVideos()
+            }
+        } else {
+            // Android 10 及以下：直接删除
+            lifecycleScope.launch(Dispatchers.IO) {
+                var deleted = 0
+                for (uri in uris) {
+                    try {
+                        val count = contentResolver.delete(uri, null, null)
+                        if (count > 0) deleted++
+                    } catch (_: Exception) {}
+                }
+                withContext(Dispatchers.Main) {
+                    if (deleted > 0) {
+                        Toast.makeText(this@MainActivity, "已删除 $deleted 个原文件", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(this@MainActivity, "无法删除原文件，已在相册中隐藏", Toast.LENGTH_SHORT).show()
+                    }
+                    loadAllVideos()
+                }
             }
         }
     }
@@ -332,6 +466,31 @@ class MainActivity : AppCompatActivity() {
                     } else null
                 }
         } catch (_: Exception) { null }
+    }
+
+    // ==================== 通过MediaStore删除文件 ====================
+
+    /**
+     * 通过 MediaStore 删除视频文件，解决 Android 10+ 分区存储限制
+     * file.delete() 在 scoped storage 下无法删除非 app 拥有的文件
+     */
+    private fun deleteVideoFromMediaStore(file: File): Boolean {
+        return try {
+            // 方式1：通过 MediaStore URI 删除
+            val uri = MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+            val selection = MediaStore.Video.Media.DATA + " = ?"
+            val args = arrayOf(file.absolutePath)
+            val deleted = contentResolver.delete(uri, selection, args)
+            if (deleted > 0) {
+                true
+            } else {
+                // 方式2：回退到普通 File.delete()
+                file.delete()
+            }
+        } catch (e: Exception) {
+            // 方式3：最后尝试直接删除
+            try { file.delete() } catch (_: Exception) { false }
+        }
     }
 
     // ==================== 播放视频 ====================
@@ -375,8 +534,8 @@ class MainActivity : AppCompatActivity() {
                     if (encryptedPath != null) {
                         // 加密成功，删除临时明文文件
                         tempFile.delete()
-                        // 删除原文件
-                        try { file.delete() } catch (_: Exception) {}
+                        // 通过MediaStore删除原文件（scoped storage兼容）
+                        deleteVideoFromMediaStore(file)
                         success++
                     } else {
                         // 加密失败，清理临时文件
