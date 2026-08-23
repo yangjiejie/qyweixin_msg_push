@@ -250,11 +250,12 @@ class ZoomableVideoView @JvmOverloads constructor(
         val scaledW = viewW * currentScale
         val scaledH = viewH * currentScale
 
-        val maxTx = (scaledW - viewW).coerceAtLeast(0f)
-        val maxTy = (scaledH - viewH).coerceAtLeast(0f)
+        // 允许向两侧平移，使缩放后视频尽量保持居中
+        val maxTx = (scaledW - viewW).coerceAtLeast(0f) / 2f
+        val maxTy = (scaledH - viewH).coerceAtLeast(0f) / 2f
 
-        translationX = translationX.coerceIn(-maxTx, 0f)
-        translationY = translationY.coerceIn(-maxTy, 0f)
+        translationX = translationX.coerceIn(-maxTx, maxTx)
+        translationY = translationY.coerceIn(-maxTy, maxTy)
         textureView.translationX = translationX
         textureView.translationY = translationY
     }

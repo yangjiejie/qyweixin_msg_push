@@ -214,6 +214,15 @@
             android:textSize="15sp" />
 
         <Button
+            android:id="@+id/btnSelectAll"
+            style="@style/Widget.MaterialComponents.Button.TextButton"
+            android:layout_width="wrap_content"
+            android:layout_height="40dp"
+            android:text="@string/select_all"
+            android:textColor="@color/accent"
+            android:textSize="14sp" />
+
+        <Button
             android:id="@+id/btnBatchEncrypt"
             style="@style/Widget.MaterialComponents.Button.TextButton"
             android:layout_width="wrap_content"
@@ -236,9 +245,28 @@
             style="@style/Widget.MaterialComponents.Button.TextButton"
             android:layout_width="wrap_content"
             android:layout_height="40dp"
-            android:text="删除"
+            android:text="@string/delete"
             android:textColor="#FF5252"
             android:textSize="14sp" />
+
+        <Button
+            android:id="@+id/btnBatchMoveToAlbum"
+            style="@style/Widget.MaterialComponents.Button.TextButton"
+            android:layout_width="wrap_content"
+            android:layout_height="40dp"
+            android:text="@string/batch_migrate_to_album"
+            android:textColor="@color/accent"
+            android:textSize="14sp" />
+
+        <Button
+            android:id="@+id/btnBatchMoveToEncrypt"
+            style="@style/Widget.MaterialComponents.Button.TextButton"
+            android:layout_width="wrap_content"
+            android:layout_height="40dp"
+            android:text="@string/batch_migrate_to_encrypt"
+            android:textColor="@color/accent"
+            android:textSize="14sp"
+            android:visibility="gone" />
     </LinearLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

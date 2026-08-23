@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">私密视频播放器</string>
+    <string name="app_name">视频播放器</string>
     <string name="no_videos">暂无视频文件</string>
     <string name="select_videos">选择视频</string>
     <string name="batch_encrypt">批量加密</string>
@@ -36,4 +36,10 @@
     <string name="play">播放</string>
     <string name="pause">暂停</string>
     <string name="back">返回</string>
+    <string name="delete">删除</string>
+    <string name="migrate_to_album">回退相册（自动解码）</string>
+    <string name="migrate_to_encrypt">迁移到加密</string>
+    <string name="batch_migrate_to_album">批量回退相册</string>
+    <string name="batch_migrate_to_encrypt">批量迁移加密</string>
+    <string name="select_all">全选</string>
 </resources>

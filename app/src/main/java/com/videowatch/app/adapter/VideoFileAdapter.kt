@@ -2,11 +2,14 @@ package com.videowatch.app.adapter
 
 import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
+import android.media.ThumbnailUtils
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.CheckBox
+import android.widget.ImageButton
 import android.widget.ImageView
+import android.widget.PopupMenu
 import android.widget.TextView
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.RecyclerView
@@ -19,14 +22,29 @@ import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
 
+/** 缩略图目标尺寸（对应视图 72x48 dp，xhdpi 下 144x96 px），固定比例不变形 */
+private const val THUMB_TARGET_W = 144
+private const val THUMB_TARGET_H = 96
+
 /**
  * 视频文件列表适配器，支持缩略图加载
  */
 class VideoFileAdapter(
     private var files: List<File>,
     private val onItemClick: (File) -> Unit,
-    private val onSelectionChanged: (Int) -> Unit
+    private val onSelectionChanged: (Int) -> Unit,
+    private val onItemDeleteClick: ((File) -> Unit)? = null,
+    private val onItemMigrateClick: ((File) -> Unit)? = null
 ) : RecyclerView.Adapter<VideoFileAdapter.ViewHolder>() {
+
+    /** 是否显示每项的“更多”菜单按钮（批量/迁移模式下显示） */
+    private var showItemMenu = false
+    fun setShowItemMenu(show: Boolean) {
+        if (showItemMenu != show) {
+            showItemMenu = show
+            notifyDataSetChanged()
+        }
+    }
 
     private var isSelectionMode = false
     private val selectedPositions = HashSet<Int>()
@@ -45,6 +63,7 @@ class VideoFileAdapter(
         val tvFileName: TextView = view.findViewById(R.id.tvFileName)
         val tvFileInfo: TextView = view.findViewById(R.id.tvFileInfo)
         val ivLock: ImageView = view.findViewById(R.id.ivLock)
+        val btnMore: ImageButton = view.findViewById(R.id.btnMore)
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
@@ -116,12 +135,23 @@ class VideoFileAdapter(
             else selectedPositions.remove(position)
             onSelectionChanged(selectedPositions.size)
         }
+
+        // 批量/迁移模式下显示“更多”菜单按钮（相册与加密视频都有该功能）
+        if (showItemMenu) {
+            holder.btnMore.visibility = View.VISIBLE
+            holder.btnMore.setOnClickListener {
+                showItemMenu(file, holder.btnMore)
+            }
+        } else {
+            holder.btnMore.visibility = View.GONE
+            holder.btnMore.setOnClickListener(null)
+        }
     }
 
     private fun loadThumbnail(file: File, holder: ViewHolder) {
         val filePath = file.absolutePath
 
-        // 已加密文件不生成缩略图
+        // 已加密文件不生成缩略图，使用固定背景占位
         if (VideoEncryptor.isEncrypted(file)) {
             holder.ivThumbnail.setImageResource(0)
             holder.ivThumbnail.setBackgroundColor(0xFF2A2A3E.toInt())
@@ -160,12 +190,9 @@ class VideoFileAdapter(
                 )
                 retriever.release()
 
-                // 缩放到目标尺寸
-                val thumbnail = if (bitmap != null) {
-                    val targetW = 144 // 对应72dp的xhdpi
-                    val targetH = 96
-                    val scaled = Bitmap.createScaledBitmap(bitmap, targetW, targetH, true)
-                    if (scaled !== bitmap) bitmap.recycle()
+                // 固定长宽比缩略图（144x96 = 视图 72x48），extractThumbnail 会保持原比例居中裁切，不变形
+                val thumbnail = if (bitmap != null && bitmap.width > 0) {
+                    val scaled = ThumbnailUtils.extractThumbnail(bitmap, THUMB_TARGET_W, THUMB_TARGET_H, ThumbnailUtils.OPTIONS_RECYCLE_INPUT)
                     scaled
                 } else null
 
@@ -210,10 +237,44 @@ class VideoFileAdapter(
         notifyDataSetChanged()
     }
 
+    /** 当前列表是否全部为加密视频（用于决定是否显示“移动到相册”按钮） */
+    fun isAllEncrypted(): Boolean = files.isNotEmpty() && files.all { VideoEncryptor.isEncrypted(it) }
+
     fun enterSelectionMode() {
         isSelectionMode = true
         selectedPositions.clear()
         notifyDataSetChanged()
+    }
+
+    /** 全选当前列表所有项 */
+    fun selectAll() {
+        if (!isSelectionMode) {
+            isSelectionMode = true
+        }
+        selectedPositions.clear()
+        for (i in files.indices) selectedPositions.add(i)
+        notifyDataSetChanged()
+        onSelectionChanged(selectedPositions.size)
+    }
+
+    /** 弹出每项的 3 点菜单：删除 / 迁移到另一端 */
+    private fun showItemMenu(file: File, anchor: View) {
+        val ctx = anchor.context
+        val popup = PopupMenu(ctx, anchor)
+        val migrateTitle = if (VideoEncryptor.isEncrypted(file)) {
+            ctx.getString(R.string.migrate_to_album)
+        } else {
+            ctx.getString(R.string.migrate_to_encrypt)
+        }
+        popup.menu.add(0, 1, 0, migrateTitle).setOnMenuItemClickListener {
+            onItemMigrateClick?.invoke(file)
+            true
+        }
+        popup.menu.add(0, 2, 0, ctx.getString(R.string.delete)).setOnMenuItemClickListener {
+            onItemDeleteClick?.invoke(file)
+            true
+        }
+        popup.show()
     }
 
     fun exitSelectionMode() {

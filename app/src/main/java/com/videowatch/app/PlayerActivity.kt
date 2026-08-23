@@ -1,6 +1,8 @@
 package com.videowatch.app
 
 import android.app.AlertDialog
+import android.content.ContentUris
+import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.graphics.Bitmap
 import android.net.Uri
@@ -8,19 +10,27 @@ import android.os.Bundle
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.provider.DocumentsContract
+import android.provider.MediaStore
+import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.ImageButton
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.IntentSenderRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.documentfile.provider.DocumentFile
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import com.videowatch.app.crypto.VideoEncryptor
 import com.videowatch.app.player.ZoomableVideoView
 import com.videowatch.app.utils.GifMaker
 import java.io.File
@@ -48,12 +58,14 @@ class PlayerActivity : AppCompatActivity() {
     private lateinit var btnBack: ImageButton
     private lateinit var btnRotate: ImageButton
     private lateinit var btnAspectRatio: TextView
+    private lateinit var btnDelete: ImageButton
 
     private var player: ExoPlayer? = null
     private var isPlaying = false
     private var isSingleLoop = true
     private var videoUri: Uri? = null
     private var videoFileName: String = ""
+    private var videoPath: String = ""
     private var currentSpeed = 1.0f
     private val speeds = floatArrayOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
     private val speedLabels = arrayOf("0.5x", "0.75x", "1.0x", "1.25x", "1.5x", "2.0x")
@@ -65,7 +77,7 @@ class PlayerActivity : AppCompatActivity() {
 
     // 控件显隐
     private val hideHandler = Handler(Looper.getMainLooper())
-    private var controlsVisible = true
+    private var controlsVisible = false
     private var controlsPermanent = false
 
     // GIF录制
@@ -133,6 +145,7 @@ class PlayerActivity : AppCompatActivity() {
         btnBack = findViewById(R.id.btnBack)
         btnRotate = findViewById(R.id.btnRotate)
         btnAspectRatio = findViewById(R.id.btnAspectRatio)
+        btnDelete = findViewById(R.id.btnDelete)
 
         btnSingleLoop.setImageResource(R.drawable.ic_loop_active)
         btnAspectRatio.text = aspectModeLabels[aspectRatioMode]
@@ -218,9 +231,21 @@ class PlayerActivity : AppCompatActivity() {
         // 比例模式 - 弹出选择框
         btnAspectRatio.setOnClickListener { showAspectRatioDialog() }
 
-        // 点击视频切换控制栏
-        videoView.setOnClickListener {
-            if (controlsVisible) hideControls() else showControls()
+        // 删除当前视频
+        btnDelete.setOnClickListener { deleteCurrentVideo() }
+
+        // 触摸视频区域：未显示控件则显示，已显示则重置“1秒后自动隐藏”计时器。
+        // 注意：监听必须直接挂在 videoView 上，挂在 decorView 等父容器上不会被子视图的触摸触发。
+        videoView.setOnTouchListener { _, event ->
+            if (event.action == MotionEvent.ACTION_DOWN) {
+                if (!controlsVisible && !controlsPermanent) {
+                    showControls()
+                } else {
+                    autoHideControls()
+                }
+            }
+            // 返回 false，保证 ZoomableVideoView 自身的缩放/平移手势仍可正常处理
+            false
         }
 
         seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
@@ -295,6 +320,7 @@ class PlayerActivity : AppCompatActivity() {
 
     private fun handleIntent() {
         val path = intent.getStringExtra("video_path") ?: return
+        videoPath = path
         val isEncrypted = intent.getBooleanExtra("is_encrypted", false)
 
         if (isEncrypted) {
@@ -386,6 +412,9 @@ class PlayerActivity : AppCompatActivity() {
             })
         }
 
+        // 初始隐藏所有控件，触摸屏幕后才显示（沉浸观看）
+        hideControls()
+
         startProgressUpdate()
     }
 
@@ -452,6 +481,7 @@ class PlayerActivity : AppCompatActivity() {
             btnFrameForward.visibility = View.VISIBLE
             btnFrameBackward.visibility = View.VISIBLE
         }
+        showSystemUi()
         autoHideControls()
     }
 
@@ -462,14 +492,34 @@ class PlayerActivity : AppCompatActivity() {
         bottomBar.visibility = View.GONE
         btnFrameForward.visibility = View.GONE
         btnFrameBackward.visibility = View.GONE
+        // 沉浸模式：隐藏系统状态栏/导航栏，纯享观看
+        hideSystemUi()
     }
 
     private fun autoHideControls() {
         hideHandler.removeCallbacksAndMessages(null)
         if (controlsPermanent) return
-        hideHandler.postDelayed({
-            if (isPlaying) hideControls()
-        }, 4000)
+        // 手指停止触摸 1 秒后，隐藏全部 UI 进入沉浸观看
+        hideHandler.postDelayed({ hideControls() }, 1000)
+    }
+
+    private fun hideSystemUi() {
+        try {
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility = (View.SYSTEM_UI_FLAG_IMMERSIVE
+                    or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                    or View.SYSTEM_UI_FLAG_FULLSCREEN
+                    or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                    or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN)
+        } catch (_: Exception) {}
+    }
+
+    private fun showSystemUi() {
+        try {
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility = (View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                    or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN)
+        } catch (_: Exception) {}
     }
 
     // ==================== 进度更新 ====================
@@ -595,6 +645,96 @@ class PlayerActivity : AppCompatActivity() {
             try { it.delete() } catch (_: Exception) {}
         }
         finish()
+    }
+
+    // ==================== 删除当前视频 ====================
+
+    private val mediaDeleteLauncher = registerForActivityResult(
+        ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        if (result.resultCode == RESULT_OK) {
+            Toast.makeText(this, "已删除", Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(this, "已取消删除", Toast.LENGTH_SHORT).show()
+        }
+        exitPlayer()
+    }
+
+    private fun deleteCurrentVideo() {
+        val name = videoFileName
+        val isEnc = VideoEncryptor.isEncrypted(File(videoPath))
+        val msg = if (isEnc) "确定删除加密视频「$name」？\n（同时删除其备份副本）" else "确定从设备相册删除视频「$name」？"
+        AlertDialog.Builder(this)
+            .setTitle("删除视频")
+            .setMessage(msg)
+            .setPositiveButton("删除") { _, _ -> doDeleteCurrentVideo(isEnc) }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun doDeleteCurrentVideo(isEnc: Boolean) {
+        if (isEnc) {
+            // 加密视频位于 App 私有目录，可直接删除文件 + 备份副本
+            val file = File(videoPath)
+            try {
+                file.delete()
+                deleteBackupMirror(file.name)
+            } catch (e: Exception) {
+                Toast.makeText(this, "删除失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                return
+            }
+            Toast.makeText(this, "已删除加密视频", Toast.LENGTH_SHORT).show()
+            exitPlayer()
+        } else {
+            // 相册视频：通过 MediaStore 申请删除，不破坏其他数据
+            val uri = getMediaStoreUriForPath(videoPath)
+            if (uri == null) {
+                // 找不到媒体库记录，尝试直接删除文件
+                if (File(videoPath).delete()) {
+                    Toast.makeText(this, "已删除", Toast.LENGTH_SHORT).show()
+                    exitPlayer()
+                } else {
+                    Toast.makeText(this, "找不到该视频的媒体记录", Toast.LENGTH_SHORT).show()
+                }
+                return
+            }
+            try {
+                val request = MediaStore.createDeleteRequest(contentResolver, listOf(uri))
+                mediaDeleteLauncher.launch(
+                    IntentSenderRequest.Builder(request.intentSender).build()
+                )
+            } catch (e: Exception) {
+                Toast.makeText(this, "删除申请失败: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    /** 删除备份目录中的同名 .enc 副本（用户自选的 SAF 备份目录） */
+    private fun deleteBackupMirror(name: String) {
+        try {
+            val prefs = getSharedPreferences("videowatch_prefs", MODE_PRIVATE)
+            val s = prefs.getString("backup_tree_uri", null) ?: return
+            val treeUri = Uri.parse(s)
+            val tree = DocumentFile.fromTreeUri(this, treeUri) ?: return
+            val target = tree.findFile(name) ?: return
+            if (target.exists()) DocumentsContract.deleteDocument(contentResolver, target.uri)
+        } catch (_: Exception) {}
+    }
+
+    /** 根据文件路径在 MediaStore 中查找视频 Uri */
+    private fun getMediaStoreUriForPath(path: String): Uri? {
+        val proj = arrayOf(MediaStore.Video.Media._ID)
+        val sel = "${MediaStore.Video.Media.DATA} = ?"
+        val cursor = contentResolver.query(
+            MediaStore.Video.Media.EXTERNAL_CONTENT_URI, proj, sel, arrayOf(path), null
+        )
+        cursor?.use {
+            if (it.moveToFirst()) {
+                val id = it.getLong(it.getColumnIndexOrThrow(MediaStore.Video.Media._ID))
+                return ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id)
+            }
+        }
+        return null
     }
 
     // ==================== 工具方法 ====================
