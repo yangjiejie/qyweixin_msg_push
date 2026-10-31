@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 录制音频对话框：A~B 区间 + OGG/WAV/MP3 勾选框（可多选） -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="20dp">
+
+    <TextView
+        android:id="@+id/tvRange"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="区间: A(00:00) ~ B(00:00)，约 0 秒"
+        android:textColor="#FFAAAAAA"
+        android:textSize="14sp" />
+
+    <CheckBox
+        android:id="@+id/cbOgg"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:layout_marginTop="12dp"
+        android:buttonTint="@color/btn_active"
+        android:checked="true"
+        android:text="OGG（体积小，游戏常用）"
+        android:textColor="@color/text_primary"
+        android:textSize="15sp" />
+
+    <CheckBox
+        android:id="@+id/cbWav"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:buttonTint="@color/btn_active"
+        android:text="WAV（无损音质，文件较大）"
+        android:textColor="@color/text_primary"
+        android:textSize="15sp" />
+
+    <CheckBox
+        android:id="@+id/cbMp3"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:buttonTint="@color/btn_active"
+        android:text="MP3（通用性好）"
+        android:textColor="@color/text_primary"
+        android:textSize="15sp" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:text="可多选，同时录制多种格式。\nMP3 在设备无 MP3 编码器时会自动保存为 M4A。\n保存位置: 内部存储/Music/VideoWatch"
+        android:textColor="#FFAAAAAA"
+        android:textSize="12sp" />
+</LinearLayout>

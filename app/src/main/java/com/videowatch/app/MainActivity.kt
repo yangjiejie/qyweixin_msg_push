@@ -6,18 +6,23 @@ import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
 import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.os.Environment
-import android.view.Menu
-import android.widget.PopupMenu
 import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.provider.Settings
+import android.view.Gravity
+import android.view.LayoutInflater
 import android.view.View
+import android.view.ViewGroup
+import android.widget.PopupWindow
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.result.IntentSenderRequest
@@ -93,8 +98,11 @@ class MainActivity : AppCompatActivity() {
         checkPermissionAndLoad()
         // 确保工作目录有 .nomedia
         ensureNomedia()
-        // 引导用户选择"加密视频备份目录"（卸载/更新后仍能保留）
-        ensureBackupFolderOrPrompt()
+        // 引导用户选择"加密视频备份目录"（卸载/更新后仍能保留）。
+        // 有存储权限时才引导，避免权限弹窗和备份引导弹窗叠在一起。
+        if (hasStoragePermission()) {
+            ensureBackupFolderOrPrompt()
+        }
     }
 
     // ==================== 全屏沉浸 ====================
@@ -141,8 +149,7 @@ class MainActivity : AppCompatActivity() {
                     binding.tvSelectedCount.text = "已选 $count 个"
                 }
             },
-            onItemDeleteClick = { file -> showItemMenu(file) },
-            onItemMigrateClick = { file -> showItemMenu(file) }
+            onItemMenuClick = { file, anchor -> showItemMenu(file, anchor) }
         )
         binding.recyclerView.adapter = adapter
 
@@ -185,15 +192,18 @@ class MainActivity : AppCompatActivity() {
         binding.btnSelectAll.setOnClickListener { adapter.selectAll() }
     }
 
-    /** 根据当前页签决定显示“批量回退相册”还是“批量迁移加密” */
+    /**
+     * 根据当前页签决定批量操作栏显示哪些按钮：
+     * - 相册视频页：全选 / 迁入加密 / 删除
+     * - 加密视频页：全选 / 迁回相册 / 删除
+     */
     private fun updateBatchMigrateButton() {
-        if (currentTab == 1) {
-            binding.btnBatchMoveToAlbum.visibility = View.VISIBLE
-            binding.btnBatchMoveToEncrypt.visibility = View.GONE
-        } else {
-            binding.btnBatchMoveToAlbum.visibility = View.GONE
-            binding.btnBatchMoveToEncrypt.visibility = View.VISIBLE
-        }
+        val isAlbumTab = currentTab == 0
+        binding.btnBatchMoveToEncrypt.visibility = if (isAlbumTab) View.VISIBLE else View.GONE
+        binding.btnBatchMoveToAlbum.visibility = if (isAlbumTab) View.GONE else View.VISIBLE
+        // “加密保护/解密恢复”与“迁入加密/迁回相册”功能重复，按分页隐藏避免混淆
+        binding.btnBatchEncrypt.visibility = View.GONE
+        binding.btnBatchDecrypt.visibility = View.GONE
     }
 
     // ==================== 权限检查 ====================
@@ -320,6 +330,7 @@ class MainActivity : AppCompatActivity() {
 
         adapter.setShowItemMenu(true) // 相册与加密视频页签都显示“更多”菜单
         adapter.updateFiles(currentList.toList())
+        updateBatchMigrateButton()
 
         if (currentList.isEmpty()) {
             binding.recyclerView.visibility = View.GONE
@@ -800,6 +811,8 @@ class MainActivity : AppCompatActivity() {
                 loadAllVideos()
                 // 切换到加密tab
                 binding.tabLayout.getTabAt(1)?.select()
+                // 未配置备份目录时提醒一次（可不再提示）
+                if (success > 0) remindBackupIfNeeded()
 
                 // 加密后，真正删除系统相册里的原视频（弹系统确认框）
                 val uris = originalsToDelete.mapNotNull { getMediaStoreUriForFile(it) }
@@ -866,6 +879,10 @@ class MainActivity : AppCompatActivity() {
      * 将选中的加密视频（.enc）自动解码并移动到系统相册（Movies）。
      * 不会破坏任何原有视频：仅在相册生成一份解密后的副本，随后删除私有目录的 .enc 及其备份副本。
      */
+    /**
+     * 批量迁回相册：兼容加密视频（.enc，需解密）与明文导入副本（直接移动）。
+     * 不会破坏任何原有视频：仅在相册生成一份副本，随后删除私有目录中的文件及备份。
+     */
     private fun batchMoveToAlbum() {
         val selected = adapter.getSelectedFiles()
         if (selected.isEmpty()) {
@@ -873,17 +890,48 @@ class MainActivity : AppCompatActivity() {
             return
         }
         val encFiles = selected.filter { VideoEncryptor.isEncrypted(it) }
-        if (encFiles.isEmpty()) {
-            Toast.makeText(this, "请选择加密视频（.enc）后移动到相册", Toast.LENGTH_SHORT).show()
+        val plainFiles = selected.filter { !VideoEncryptor.isEncrypted(it) }
+        if (encFiles.isEmpty() && plainFiles.isEmpty()) {
+            Toast.makeText(this, "请先选择要移动的视频", Toast.LENGTH_SHORT).show()
             return
         }
 
         AlertDialog.Builder(this)
             .setTitle(R.string.migrate_to_album)
-            .setMessage("将选中的 ${encFiles.size} 个加密视频解码后保存到系统相册（Movies），并删除 App 内的加密副本及备份。\n不会破坏任何原有视频。")
-            .setPositiveButton("确定移动") { _, _ -> doMoveToAlbum(encFiles) }
+            .setMessage("将选中的 ${encFiles.size + plainFiles.size} 个视频保存到系统相册（Movies），并删除 App 内的副本及备份。\n不会破坏任何原有视频。")
+            .setPositiveButton("确定移动") { _, _ ->
+                if (encFiles.isNotEmpty()) doMoveToAlbum(encFiles)
+                if (plainFiles.isNotEmpty()) doMovePlainFilesToAlbum(plainFiles)
+            }
             .setNegativeButton("取消", null)
             .show()
+    }
+
+    /** 将私有目录中的明文视频副本批量移回系统相册 */
+    private fun doMovePlainFilesToAlbum(files: List<File>) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            var success = 0
+            for (file in files) {
+                try {
+                    val uri = insertVideoToAlbum(file, file.name)
+                    if (uri != null) {
+                        file.delete()
+                        success++
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "移动明文副本到相册异常: ${file.name}", e)
+                }
+            }
+            withContext(Dispatchers.Main) {
+                Toast.makeText(
+                    this@MainActivity,
+                    "已移动到相册：$success/${files.size}",
+                    Toast.LENGTH_LONG
+                ).show()
+                loadAllVideos()
+                binding.tabLayout.getTabAt(0)?.select()
+            }
+        }
     }
 
     private fun doMoveToAlbum(encFiles: List<File>) {
@@ -935,69 +983,116 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * 每项（相册或加密视频）的“更多”菜单：删除 / 迁移到另一端。
-     * - 加密视频：迁移=解码回退到相册；删除=删 .enc 及备份。
-     * - 相册视频：迁移=加密后移入 App 私有目录；删除=从系统相册删除。
+     * 每项视频的“更多”菜单，内容随分页不同：
+     * - 相册视频页：迁入加密视频 / 删除（从系统相册删除）
+     * - 加密视频页：迁回相册 / 删除（删 App 内文件及备份）
+     *
+     * 使用自定义 PopupWindow（深色底 + 白字），避免 PopupMenu 在系统深浅色
+     * 模式下出现文字与背景对比度不足、“颜色太暗看不清”的问题。
      */
-    private fun showItemMenu(file: File) {
+    private fun showItemMenu(file: File, anchor: View) {
+        val isAlbumTab = currentTab == 0
         val isEnc = VideoEncryptor.isEncrypted(file)
-        val anchor = binding.recyclerView
-        val popup = PopupMenu(this, anchor)
-        val migrateTitle = if (isEnc) {
-            getString(R.string.migrate_to_album)
+
+        val view = LayoutInflater.from(this).inflate(R.layout.popup_item_menu, null)
+        val tvMigrate = view.findViewById<TextView>(R.id.tvMenuMigrate)
+        val tvDelete = view.findViewById<TextView>(R.id.tvMenuDelete)
+
+        if (isAlbumTab) {
+            tvMigrate.setText(R.string.migrate_to_encrypt)
+            tvMigrate.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_lock, 0, 0, 0)
         } else {
-            getString(R.string.migrate_to_encrypt)
+            tvMigrate.setText(R.string.migrate_to_album)
+            tvMigrate.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_add_video, 0, 0, 0)
         }
-        popup.menu.add(Menu.NONE, 1, 1, migrateTitle)
-        popup.menu.add(Menu.NONE, 2, 2, getString(R.string.delete))
-        popup.setOnMenuItemClickListener { item ->
-            when (item.itemId) {
-                1 -> {
-                    if (isEnc) {
-                        // 解码回退到相册，只处理这一个文件
-                        AlertDialog.Builder(this)
-                            .setTitle(R.string.migrate_to_album)
-                            .setMessage("将该加密视频解码后保存到系统相册（Movies），并删除 App 内的加密副本及备份。\n不会破坏任何原有视频。")
-                            .setPositiveButton("确定") { _, _ -> doMoveToAlbum(listOf(file)) }
-                            .setNegativeButton("取消", null)
-                            .show()
-                    } else {
-                        // 加密后移入 App 私有目录
-                        AlertDialog.Builder(this)
-                            .setTitle(R.string.migrate_to_encrypt)
-                            .setMessage("将该相册视频加密后移入 App 私有目录（${appVideoDir.name}）。\n将在系统相册中删除原视频。")
-                            .setPositiveButton("确定") { _, _ -> doMoveToEncrypt(listOf(file)) }
-                            .setNegativeButton("取消", null)
-                            .show()
-                    }
-                    true
+
+        val popup = PopupWindow(
+            view,
+            (232 * resources.displayMetrics.density).toInt(),
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            true
+        ).apply {
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            isOutsideTouchable = true
+            isFocusable = true
+            elevation = 12 * resources.displayMetrics.density
+        }
+
+        tvMigrate.setOnClickListener {
+            popup.dismiss()
+            when {
+                isAlbumTab -> {
+                    // 相册视频 -> 加密后移入 App 私有目录
+                    AlertDialog.Builder(this)
+                        .setTitle(R.string.migrate_to_encrypt)
+                        .setMessage("将该相册视频加密后移入 App 私有目录（${appVideoDir.name}）。\n将在系统相册中删除原视频。")
+                        .setPositiveButton("确定") { _, _ -> doMoveToEncrypt(listOf(file)) }
+                        .setNegativeButton("取消", null)
+                        .show()
                 }
-                2 -> {
-                    if (isEnc) {
-                        AlertDialog.Builder(this)
-                            .setTitle(R.string.delete)
-                            .setMessage("确定删除加密视频「${file.name}」？\n（同时删除其备份副本）")
-                            .setPositiveButton("删除") { _, _ ->
-                                try {
-                                    file.delete()
-                                    deleteBackupEncMirror(file.name)
-                                    Toast.makeText(this, "已删除", Toast.LENGTH_SHORT).show()
-                                } catch (e: Exception) {
-                                    Toast.makeText(this, "删除失败: ${e.message}", Toast.LENGTH_SHORT).show()
-                                }
-                                loadAllVideos()
-                            }
-                            .setNegativeButton("取消", null)
-                            .show()
-                    } else {
-                        confirmDeleteAlbumVideo(file)
-                    }
-                    true
+                isEnc -> {
+                    // 加密视频 -> 解码回退到相册
+                    AlertDialog.Builder(this)
+                        .setTitle(R.string.migrate_to_album)
+                        .setMessage("将该加密视频解码后保存到系统相册（Movies），并删除 App 内的加密副本及备份。\n不会破坏任何原有视频。")
+                        .setPositiveButton("确定") { _, _ -> doMoveToAlbum(listOf(file)) }
+                        .setNegativeButton("取消", null)
+                        .show()
                 }
-                else -> false
+                else -> {
+                    // 私有目录中的明文导入副本 -> 直接移回相册
+                    AlertDialog.Builder(this)
+                        .setTitle(R.string.migrate_to_album)
+                        .setMessage("将该视频移回系统相册（Movies），并删除 App 内的副本。")
+                        .setPositiveButton("确定") { _, _ -> movePlainFileToAlbum(file) }
+                        .setNegativeButton("取消", null)
+                        .show()
+                }
             }
         }
-        popup.show()
+
+        tvDelete.setOnClickListener {
+            popup.dismiss()
+            when {
+                isAlbumTab -> confirmDeleteAlbumVideo(file)
+                isEnc -> {
+                    AlertDialog.Builder(this)
+                        .setTitle(R.string.delete)
+                        .setMessage("确定删除加密视频「${file.name}」？\n（同时删除其备份副本）")
+                        .setPositiveButton("删除") { _, _ ->
+                            try {
+                                file.delete()
+                                deleteBackupEncMirror(file.name)
+                                Toast.makeText(this, "已删除", Toast.LENGTH_SHORT).show()
+                            } catch (e: Exception) {
+                                Toast.makeText(this, "删除失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                            }
+                            loadAllVideos()
+                        }
+                        .setNegativeButton("取消", null)
+                        .show()
+                }
+                else -> {
+                    AlertDialog.Builder(this)
+                        .setTitle(R.string.delete)
+                        .setMessage("确定删除「${file.name}」？")
+                        .setPositiveButton("删除") { _, _ ->
+                            file.delete()
+                            loadAllVideos()
+                        }
+                        .setNegativeButton("取消", null)
+                        .show()
+                }
+            }
+        }
+
+        // 右对齐锚点按钮弹出，超出屏幕时自动向左展开
+        popup.showAsDropDown(anchor, 0, 0, Gravity.END)
+    }
+
+    /** 将私有目录中的明文视频副本移回系统相册，然后删除 App 内副本 */
+    private fun movePlainFileToAlbum(file: File) {
+        doMovePlainFilesToAlbum(listOf(file))
     }
 
     /**
@@ -1026,6 +1121,14 @@ class MainActivity : AppCompatActivity() {
     /**
      * 将相册视频逐个加密到私有目录，然后删除系统相册中的原视频。
      */
+    /**
+     * 将相册视频逐个加密后移入 App 私有目录，然后删除系统相册中的原视频。
+     *
+     * 注意：VideoEncryptor.encrypt() 是在“输入文件同目录”生成 .enc，
+     * 而分区存储（Android 10+）下 App 无权在相册目录写新文件，
+     * 因此必须先把视频拷贝到私有目录再加密，否则加密必然失败
+     * （表现为：点了迁移但加密页没有任何数据、原视频仍在相册）。
+     */
     private fun doMoveToEncrypt(albumFiles: List<File>) {
         lifecycleScope.launch(Dispatchers.IO) {
             ensureActive()
@@ -1039,23 +1142,30 @@ class MainActivity : AppCompatActivity() {
             for (file in albumFiles) {
                 ensureActive()
                 try {
-                    // 加密后默认生成 file.absolutePath + ".enc"
-                    val encPath = VideoEncryptor.encrypt(file.absolutePath)
-                    val encFile = if (encPath != null) File(encPath) else null
-                    if (encFile != null && encFile.exists()) {
-                        val dest = File(appVideoDir, file.name + ".enc")
-                        encFile.copyTo(dest, overwrite = true)
-                        encFile.delete()
-                        // 立即镜像到备份目录，保证卸载后仍在
-                        try { mirrorEncryptedToBackup(dest) } catch (_: Exception) {}
-                        success++
-                        val uri = getMediaStoreUriForFile(file)
-                        if (uri != null) originalsToDelete.add(uri)
-                        // 删除系统相册中的原视频（避免重复）
-                        try { file.delete() } catch (_: Exception) {}
-                    } else {
-                        Log.e(TAG, "迁移到加密失败(加密失败): ${file.name}")
+                    // 1) 先把原视频拷贝到 App 私有目录（明文临时文件）
+                    val tempFile = copyVideoToPrivateDir(file)
+                    if (tempFile == null) {
+                        Log.e(TAG, "迁移到加密失败(无法读取原视频): ${file.name}")
+                        continue
                     }
+                    // 2) 在私有目录内加密（该目录有写权限）
+                    val encPath = VideoEncryptor.encrypt(tempFile.absolutePath)
+                    val encFile = if (encPath != null) File(encPath) else null
+                    if (encFile == null || !encFile.exists()) {
+                        Log.e(TAG, "迁移到加密失败(加密失败): ${file.name}")
+                        tempFile.delete()
+                        continue
+                    }
+                    // 3) 删除明文临时文件，仅保留 .enc
+                    tempFile.delete()
+                    // 清理旧版本在相册目录留下的 .enc 残留（之前失败尝试可能产生的）
+                    try { File(file.absolutePath + ".enc").delete() } catch (_: Exception) {}
+                    // 4) 立即镜像到备份目录，保证卸载后仍在
+                    try { mirrorEncryptedToBackup(encFile) } catch (_: Exception) {}
+                    success++
+                    // 5) 标记系统相册中的原文件，稍后统一删除
+                    getMediaStoreUriForFile(file)?.let { originalsToDelete.add(it) }
+                    try { file.delete() } catch (_: Exception) {}
                 } catch (e: Exception) {
                     Log.e(TAG, "迁移到加密异常: ${file.name} | ${e.message}", e)
                 }
@@ -1064,18 +1174,56 @@ class MainActivity : AppCompatActivity() {
             ensureActive()
             withContext(Dispatchers.Main) {
                 binding.progressBar.visibility = View.GONE
-                if (originalsToDelete.isNotEmpty()) {
-                    requestDeleteUris(originalsToDelete)
-                } else {
-                    cancelMultiSelect()
+                cancelMultiSelect()
+                if (success == 0) {
+                    Toast.makeText(
+                        this@MainActivity,
+                        "迁移失败：无法读取或加密所选视频",
+                        Toast.LENGTH_LONG
+                    ).show()
                     loadAllVideos()
+                    return@withContext
                 }
                 Toast.makeText(
                     this@MainActivity,
                     "已迁移到加密：$success/${albumFiles.size}",
                     Toast.LENGTH_LONG
                 ).show()
+                // 未配置备份目录时提醒一次（可不再提示）
+                remindBackupIfNeeded()
+                // 先刷新列表（.enc 已落盘），再切到加密页；随后再删相册原文件
+                loadAllVideos()
+                if (originalsToDelete.isNotEmpty()) {
+                    requestDeleteUris(originalsToDelete)
+                }
                 binding.tabLayout.getTabAt(1)?.select()
+            }
+        }
+    }
+
+    /**
+     * 把相册视频拷贝到 App 私有目录（明文临时文件）。
+     * 优先直接按路径拷贝；失败时退化为通过 MediaStore content URI 读取
+     * （部分 ROM/文件管理器选择的文件无法直接按路径读取）。
+     */
+    private fun copyVideoToPrivateDir(file: File): File? {
+        val dest = File(appVideoDir, file.name)
+        return try {
+            if (dest.exists()) dest.delete()
+            file.copyTo(dest, overwrite = true)
+            if (dest.exists() && dest.length() > 0) dest else null
+        } catch (e: Exception) {
+            Log.w(TAG, "直接拷贝失败，尝试通过 MediaStore 读取: ${file.name}", e)
+            try {
+                val uri = getMediaStoreUriForFile(file) ?: return null
+                contentResolver.openInputStream(uri)?.use { input ->
+                    dest.outputStream().use { output -> input.copyTo(output) }
+                } ?: return null
+                if (dest.exists() && dest.length() > 0) dest else null
+            } catch (e2: Exception) {
+                Log.e(TAG, "通过 MediaStore 拷贝也失败: ${file.name}", e2)
+                dest.delete()
+                null
             }
         }
     }
@@ -1182,8 +1330,30 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** 删除 SAF 备份目录中同名 .enc 镜像副本 */
+    /**
+     * 已删除的备份文件名（墓碑记录）。
+     * 部分 ROM 上删除备份副本会失败，若不记录墓碑，下次刷新时
+     * restoreEncryptedFromBackup() 会把用户删掉的加密视频又恢复回来。
+     */
+    private val deletedBackupNames: Set<String>
+        get() = prefs.getStringSet("deleted_backup_names", emptySet()) ?: emptySet()
+
+    private fun markBackupDeleted(name: String) {
+        val set = deletedBackupNames.toMutableSet().apply { add(name) }
+        prefs.edit().putStringSet("deleted_backup_names", set).apply()
+    }
+
+    private fun clearBackupDeleted(name: String) {
+        if (deletedBackupNames.contains(name)) {
+            val set = deletedBackupNames.toMutableSet().apply { remove(name) }
+            prefs.edit().putStringSet("deleted_backup_names", set).apply()
+        }
+    }
+
+    /** 删除 SAF 备份目录中同名 .enc 镜像副本（无论是否删成功都记录墓碑，防止被恢复） */
     private fun deleteBackupEncMirror(name: String) {
+        // 先记录墓碑：即使下面删除失败，也不会在下次刷新时从备份恢复回来
+        markBackupDeleted(name)
         val uri = backupTreeUri ?: return
         try {
             val tree = DocumentFile.fromTreeUri(this, uri) ?: return
@@ -1191,7 +1361,7 @@ class MainActivity : AppCompatActivity() {
             try {
                 DocumentsContract.deleteDocument(contentResolver, doc.uri)
             } catch (e: Exception) {
-                Log.w(TAG, "删除备份副本失败: $name", e)
+                Log.w(TAG, "删除备份副本失败(已记录墓碑，不会再恢复): $name", e)
             }
         } catch (_: Exception) {}
     }
@@ -1248,6 +1418,8 @@ class MainActivity : AppCompatActivity() {
     private fun ensureBackupFolderOrPrompt() {
         if (backupTreeUri != null) return
         if (backupPromptPending) return
+        // 用户选过“暂时跳过”后，不再每次启动都弹（改为在真正加密时再提醒一次）
+        if (prefs.getBoolean("backup_prompt_dismissed", false)) return
 
         // 检测是否是重装（之前设置过但权限失效了）
         val hadBackupBefore = prefs.contains("backup_tree_uri")
@@ -1264,6 +1436,8 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton("选择目录") { _, _ -> launchBackupPicker() }
             .setNegativeButton("暂时跳过") { _, _ ->
                 backupPromptPending = false
+                // 记住跳过，不再每次启动重复弹窗
+                prefs.edit().putBoolean("backup_prompt_dismissed", true).apply()
                 Toast.makeText(
                     this,
                     "未设置备份目录：加密视频仅保存在应用私有空间，卸载后将无法恢复",
@@ -1271,6 +1445,40 @@ class MainActivity : AppCompatActivity() {
                 ).show()
             }
             .show()
+    }
+
+    /**
+     * 加密/迁移成功后调用：若仍未配置备份目录，提醒一次（可不再提示）。
+     * 替代“每次启动都弹引导框”的做法，在用户真正有数据要备份时再引导。
+     */
+    private fun remindBackupIfNeeded() {
+        if (backupTreeUri != null) return
+        if (backupPromptPending) return
+        if (prefs.getBoolean("backup_prompt_dismissed", false)) return
+
+        backupPromptPending = true
+        AlertDialog.Builder(this)
+            .setTitle("设置备份目录")
+            .setMessage("加密视频目前只保存在本机 App 内，卸载或更新后会丢失。\n是否现在选择一个备份目录？")
+            .setPositiveButton("去设置") { _, _ ->
+                backupPromptPending = false
+                launchBackupPicker()
+            }
+            .setNegativeButton("不再提示") { _, _ ->
+                backupPromptPending = false
+                prefs.edit().putBoolean("backup_prompt_dismissed", true).apply()
+            }
+            .show()
+    }
+
+    /** 是否已获得存储读取权限（用于决定是否弹出备份引导） */
+    private fun hasStoragePermission(): Boolean {
+        val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Manifest.permission.READ_MEDIA_VIDEO
+        } else {
+            Manifest.permission.READ_EXTERNAL_STORAGE
+        }
+        return ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
     }
 
     private fun launchBackupPicker() {
@@ -1366,30 +1574,47 @@ class MainActivity : AppCompatActivity() {
             val existing = tree.findFile(src.name)
             if (existing != null && existing.exists() && existing.isFile) {
                 Log.d(TAG, "[镜像] 已存在同名文件: ${src.name} (备份size=${existing.length()}, 源size=${src.length()})")
-                if (existing.length() == src.length()) return true
-                // 大小不一致，覆盖
-                if (writeStream(existing.uri, src)) {
-                    Log.d(TAG, "[镜像] 已覆盖大小不一致的文件: ${src.name}")
+                if (existing.length() == src.length()) {
+                    clearBackupDeleted(src.name)
                     return true
                 }
-                Log.w(TAG, "[镜像] 覆盖失败，尝试重新创建: ${src.name}")
+                // 大小不一致，覆盖。
+                // 注意：openOutputStream("rwt") 会先截断，写失败会把原备份毁成半成品，
+                // 因此失败时必须把这个损坏文件删掉，否则以后恢复出来是打不开的视频。
+                if (writeStream(existing.uri, src)) {
+                    Log.d(TAG, "[镜像] 已覆盖大小不一致的文件: ${src.name}")
+                    clearBackupDeleted(src.name)
+                    return true
+                }
+                Log.w(TAG, "[镜像] 覆盖失败，删除损坏备份后重试: ${src.name}")
+                try { existing.delete() } catch (_: Exception) {}
             }
 
             // 2) 多策略创建并写入
             if (createAndWrite(tree, uri, src)) {
                 val targetDoc = tree.findFile(src.name)
-                val writtenOk = targetDoc?.exists() == true && targetDoc.isFile && targetDoc.length() > 0
+                val writtenOk = targetDoc?.exists() == true && targetDoc.isFile &&
+                        targetDoc.length() == src.length()
                 Log.d(TAG, "[镜像] 完成: ${src.name} -> writtenOk=$writtenOk, size=${targetDoc?.length()}")
+                if (writtenOk) clearBackupDeleted(src.name)
                 return writtenOk
             }
 
             // 3) 兜底：直接按真实文件路径写入（部分 ROM 下可行）
             val fallback = writeViaRealPath(uri, src)
             Log.d(TAG, "[镜像] 真实路径兜底结果: $fallback (${src.name})")
-            if (!fallback && lastMirrorError.isEmpty()) {
+            if (fallback) {
+                // 校验落盘大小，避免留下打不开的半成品备份
+                val doc = tree.findFile(src.name)
+                val ok = doc != null && doc.isFile && doc.length() == src.length()
+                Log.d(TAG, "[镜像] 兜底写入校验: ok=$ok (${src.name})")
+                if (ok) clearBackupDeleted(src.name)
+                return ok
+            }
+            if (lastMirrorError.isEmpty()) {
                 lastMirrorError = "所有写入策略均失败(createFile/createDocument/真实路径)，请尝试更换备份目录或查看日志"
             }
-            return fallback
+            return false
         } catch (e: Exception) {
             lastMirrorError = "${e.javaClass.simpleName}: ${e.message}"
             Log.e(TAG, "[镜像] 异常: ${src.name} | ${e.javaClass.simpleName}: ${e.message}", e)
@@ -1407,8 +1632,10 @@ class MainActivity : AppCompatActivity() {
                         Log.d(TAG, "[镜像] createFile 成功(mime=$mime): ${src.name}")
                         return true
                     } else {
-                        Log.w(TAG, "[镜像] createFile 成功但写入失败(mime=$mime): ${src.name}")
-                        if (lastMirrorError.isEmpty()) lastMirrorError = "createFile 成功但 openOutputStream 失败(mime=$mime)"
+                        // 写失败：删掉半成品，避免以后从备份恢复出损坏文件
+                        Log.w(TAG, "[镜像] createFile 成功但写入失败(mime=$mime)，清理半成品: ${src.name}")
+                        try { target.delete() } catch (_: Exception) {}
+                        if (lastMirrorError.isEmpty()) lastMirrorError = "createFile 成功但写入失败(mime=$mime)"
                     }
                 } else {
                     Log.w(TAG, "[镜像] createFile 返回null(mime=$mime): ${src.name}")
@@ -1430,6 +1657,10 @@ class MainActivity : AppCompatActivity() {
                     return true
                 } else if (newUri == null && lastMirrorError.isEmpty()) {
                     lastMirrorError = "DocumentsContract.createDocument 返回null(mime=$mime)"
+                } else if (newUri != null) {
+                    // 写失败：删掉半成品
+                    Log.w(TAG, "[镜像] createDocument 写入失败(mime=$mime)，清理半成品: ${src.name}")
+                    try { DocumentsContract.deleteDocument(contentResolver, newUri) } catch (_: Exception) {}
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "[镜像] createDocument 异常(mime=$mime): ${e.javaClass.simpleName}: ${e.message}")
@@ -1461,7 +1692,20 @@ class MainActivity : AppCompatActivity() {
                 lastMirrorError = "真实路径不可写: $path"
                 return false
             }
-            src.copyTo(File(dir, src.name), overwrite = true)
+            // 先写临时文件再重命名，失败时不会留下半成品备份
+            val tmp = File(dir, src.name + ".partial")
+            try {
+                src.copyTo(tmp, overwrite = true)
+                val dest = File(dir, src.name)
+                if (dest.exists()) dest.delete()
+                if (!tmp.renameTo(dest)) {
+                    tmp.delete()
+                    return false
+                }
+            } catch (e: Exception) {
+                tmp.delete()
+                throw e
+            }
             true
         } catch (e: Exception) {
             Log.w(TAG, "[镜像] 真实路径写入异常: ${e.javaClass.simpleName}: ${e.message}")
@@ -1532,6 +1776,7 @@ class MainActivity : AppCompatActivity() {
      */
     private fun restoreEncryptedFromBackup(treeUri: Uri): Int {
         var restored = 0
+        var repaired = 0
         var skipped = 0
         Log.d(TAG, "[恢复] 开始从备份目录恢复: ${describeTreeUri(treeUri)}")
         try {
@@ -1552,17 +1797,69 @@ class MainActivity : AppCompatActivity() {
 
                 val dest = File(appVideoDir, name)
                 if (dest.exists()) {
-                    Log.d(TAG, "[恢复] 跳过（已存在）: $name (${dest.length()}B)")
+                    // 本地副本与备份大小不一致：本地很可能是旧版直接写目标文件时
+                    // 拷贝中断留下的半成品（会导致视频无法播放且永远不会被重试），
+                    // 此时用备份修复本地副本。
+                    val expected = doc.length()
+                    if (expected > 0 && dest.length() < expected) {
+                        Log.w(TAG, "[恢复] 本地副本不完整，用备份修复: $name 本地=${dest.length()} 备份=$expected")
+                        try {
+                            val tmp = File(appVideoDir, "$name.partial")
+                            if (tmp.exists()) tmp.delete()
+                            contentResolver.openInputStream(doc.uri)?.use { ins ->
+                                tmp.outputStream().use { outs -> ins.copyTo(outs) }
+                            }
+                            if (tmp.length() == expected && dest.delete() && tmp.renameTo(dest)) {
+                                repaired++
+                                Log.d(TAG, "[恢复] 已修复: $name (${dest.length()}B)")
+                            } else {
+                                tmp.delete()
+                                skipped++
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "[恢复] 修复失败: $name", e)
+                            skipped++
+                        }
+                    } else {
+                        Log.d(TAG, "[恢复] 跳过（已存在）: $name (${dest.length()}B)")
+                        skipped++
+                    }
+                    continue
+                }
+                // 用户主动删除过的文件不再恢复（墓碑机制），
+                // 否则会出现“删掉的视频又自己回来了”
+                if (name in deletedBackupNames) {
+                    Log.d(TAG, "[恢复] 跳过（用户已删除，墓碑记录）: $name")
                     skipped++
                     continue
                 }
                 try {
-                    contentResolver.openInputStream(doc.uri)?.use { ins ->
-                        dest.outputStream().use { outs -> ins.copyTo(outs) }
-                    }?.let {
+                    val expected = doc.length()
+                    // 先写临时文件并校验大小，成功后再原子重命名。
+                    // 若直接写 dest，拷贝中断/失败会留下打不开的半成品，
+                    // 且因为 dest.exists() 下次会被跳过，损坏文件将永远无法修复。
+                    val tmp = File(appVideoDir, "$name.partial")
+                    if (tmp.exists()) tmp.delete()
+                    val stream = contentResolver.openInputStream(doc.uri)
+                    if (stream == null) {
+                        Log.e(TAG, "[恢复] openInputStream 返回 null: ${doc.uri}")
+                        tmp.delete()
+                        continue
+                    }
+                    stream.use { ins -> tmp.outputStream().use { outs -> ins.copyTo(outs) } }
+                    if (expected > 0 && tmp.length() != expected) {
+                        // 备份本身不完整（可能是之前镜像写失败留下的），跳过，不写入私有目录
+                        Log.e(TAG, "[恢复] 备份文件大小不一致，跳过: $name 期望=$expected 实际=${tmp.length()}")
+                        tmp.delete()
+                        continue
+                    }
+                    if (tmp.renameTo(dest)) {
                         restored++
                         Log.d(TAG, "[恢复] 成功: $name (${dest.length()}B)")
-                    } ?: Log.e(TAG, "[恢复] openInputStream 返回 null: ${doc.uri}")
+                    } else {
+                        Log.e(TAG, "[恢复] 重命名失败: $name")
+                        tmp.delete()
+                    }
                 } catch (e: Exception) {
                     Log.e(TAG, "[恢复] 失败: $name", e)
                 }
@@ -1570,7 +1867,7 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) {
             Log.e(TAG, "[恢复] 异常", e)
         }
-        Log.d(TAG, "[恢复] 完成: 恢复=$restored, 跳过=$skipped")
+        Log.d(TAG, "[恢复] 完成: 恢复=$restored, 修复=$repaired, 跳过=$skipped")
         // 恢复完成后 Toast 通知主线程
         if (restored > 0) {
             binding.root.post {

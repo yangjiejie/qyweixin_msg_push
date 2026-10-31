@@ -15,6 +15,7 @@ import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.RecyclerView
 import com.videowatch.app.R
 import com.videowatch.app.crypto.VideoEncryptor
+import com.videowatch.app.utils.VideoThumbs
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -33,8 +34,7 @@ class VideoFileAdapter(
     private var files: List<File>,
     private val onItemClick: (File) -> Unit,
     private val onSelectionChanged: (Int) -> Unit,
-    private val onItemDeleteClick: ((File) -> Unit)? = null,
-    private val onItemMigrateClick: ((File) -> Unit)? = null
+    private val onItemMenuClick: ((File, View) -> Unit)? = null
 ) : RecyclerView.Adapter<VideoFileAdapter.ViewHolder>() {
 
     /** 是否显示每项的“更多”菜单按钮（批量/迁移模式下显示） */
@@ -140,7 +140,7 @@ class VideoFileAdapter(
         if (showItemMenu) {
             holder.btnMore.visibility = View.VISIBLE
             holder.btnMore.setOnClickListener {
-                showItemMenu(file, holder.btnMore)
+                onItemMenuClick?.invoke(file, holder.btnMore)
             }
         } else {
             holder.btnMore.visibility = View.GONE
@@ -151,10 +151,41 @@ class VideoFileAdapter(
     private fun loadThumbnail(file: File, holder: ViewHolder) {
         val filePath = file.absolutePath
 
-        // 已加密文件不生成缩略图，使用固定背景占位
+        // 已加密文件：解密到缓存再抽帧（结果以磁盘缓存复用，避免每次解密整个文件）
         if (VideoEncryptor.isEncrypted(file)) {
             holder.ivThumbnail.setImageResource(0)
             holder.ivThumbnail.setBackgroundColor(0xFF2A2A3E.toInt())
+            if (thumbnailCache.containsKey(filePath)) {
+                thumbnailCache[filePath]?.let {
+                    holder.ivThumbnail.setImageBitmap(it)
+                    holder.ivPlayOverlay.visibility = View.VISIBLE
+                }
+                return
+            }
+            pendingFutures[filePath]?.let { future ->
+                if (!future.isDone) future.cancel(true)
+            }
+            val future = thumbnailExecutor.submit {
+                try {
+                    if (Thread.currentThread().isInterrupted) return@submit
+                    val bitmap = VideoThumbs.thumbForEncrypted(holder.itemView.context, file)
+                    if (!Thread.currentThread().isInterrupted) {
+                        thumbnailCache[filePath] = bitmap
+                        holder.itemView.post {
+                            val currentFile = if (holder.bindingAdapterPosition in 0 until files.size) {
+                                files[holder.bindingAdapterPosition]
+                            } else null
+                            if (currentFile?.absolutePath == filePath && bitmap != null) {
+                                holder.ivThumbnail.setImageBitmap(bitmap)
+                                holder.ivPlayOverlay.visibility = View.VISIBLE
+                            }
+                        }
+                    }
+                } catch (_: Exception) {
+                    thumbnailCache[filePath] = null
+                }
+            }
+            pendingFutures[filePath] = future
             return
         }
 
@@ -255,26 +286,6 @@ class VideoFileAdapter(
         for (i in files.indices) selectedPositions.add(i)
         notifyDataSetChanged()
         onSelectionChanged(selectedPositions.size)
-    }
-
-    /** 弹出每项的 3 点菜单：删除 / 迁移到另一端 */
-    private fun showItemMenu(file: File, anchor: View) {
-        val ctx = anchor.context
-        val popup = PopupMenu(ctx, anchor)
-        val migrateTitle = if (VideoEncryptor.isEncrypted(file)) {
-            ctx.getString(R.string.migrate_to_album)
-        } else {
-            ctx.getString(R.string.migrate_to_encrypt)
-        }
-        popup.menu.add(0, 1, 0, migrateTitle).setOnMenuItemClickListener {
-            onItemMigrateClick?.invoke(file)
-            true
-        }
-        popup.menu.add(0, 2, 0, ctx.getString(R.string.delete)).setOnMenuItemClickListener {
-            onItemDeleteClick?.invoke(file)
-            true
-        }
-        popup.show()
     }
 
     fun exitSelectionMode() {

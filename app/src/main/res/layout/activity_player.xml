@@ -78,6 +78,36 @@
             android:src="@drawable/ic_delete"
             android:contentDescription="删除"
             android:scaleType="centerInside" />
+
+        <!-- 截取音频(OGG/WAV/MP3) -->
+        <ImageButton
+            android:id="@+id/btnAudio"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:background="@android:color/transparent"
+            android:src="@drawable/ic_audio"
+            android:contentDescription="截取音频"
+            android:scaleType="centerInside" />
+
+        <!-- 截取视频片段 -->
+        <ImageButton
+            android:id="@+id/btnVideoClip"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:background="@android:color/transparent"
+            android:src="@drawable/ic_video_clip"
+            android:contentDescription="截取视频片段"
+            android:scaleType="centerInside" />
+
+        <!-- 手动隐藏控件 -->
+        <ImageButton
+            android:id="@+id/btnHideUi"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:background="@android:color/transparent"
+            android:src="@drawable/ic_hide_ui"
+            android:contentDescription="隐藏控件"
+            android:scaleType="centerInside" />
     </LinearLayout>
 
     <!-- 底部控制栏 -->

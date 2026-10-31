@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 每项视频的“更多”菜单（自定义 PopupWindow：深色底+白字，不受系统深浅色模式影响） -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bg_popup_menu"
+    android:minWidth="220dp"
+    android:orientation="vertical"
+    android:paddingVertical="6dp">
+
+    <TextView
+        android:id="@+id/tvMenuMigrate"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:drawableStart="@drawable/ic_lock"
+        android:drawablePadding="12dp"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="16dp"
+        android:text="迁入加密视频"
+        android:textColor="#FFFFFFFF"
+        android:textSize="15sp"
+        android:background="?attr/selectableItemBackground" />
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:layout_marginHorizontal="12dp"
+        android:background="#22FFFFFF" />
+
+    <TextView
+        android:id="@+id/tvMenuDelete"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:drawableStart="@drawable/ic_delete"
+        android:drawablePadding="12dp"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="16dp"
+        android:text="删除"
+        android:textColor="#FFFF6B6B"
+        android:textSize="15sp"
+        android:background="?attr/selectableItemBackground" />
+</LinearLayout>

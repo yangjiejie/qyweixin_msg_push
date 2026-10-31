@@ -301,26 +301,36 @@ object GifMaker {
 
         private fun mapPixelsToPalette(pixels: IntArray, palette: IntArray): IntArray {
             val result = IntArray(pixels.size)
+            // 相同颜色的像素极多，用缓存避免重复做全调色板距离计算（否则每帧要跑上千万次比较）
+            val cache = HashMap<Int, Int>(4096)
             for (i in pixels.indices) {
                 val rgb = pixels[i] and 0x00FFFFFF
-                var bestIndex = 0
-                var bestDist = Int.MAX_VALUE
-                for (j in palette.indices) {
-                    val pr = (palette[j] shr 16) and 0xFF
-                    val pg = (palette[j] shr 8) and 0xFF
-                    val pb = palette[j] and 0xFF
-                    val r = (rgb shr 16) and 0xFF
-                    val g = (rgb shr 8) and 0xFF
-                    val b = rgb and 0xFF
-                    val dist = (r - pr) * (r - pr) + (g - pg) * (g - pg) + (b - pb) * (b - pb)
-                    if (dist < bestDist) {
-                        bestDist = dist
-                        bestIndex = j
-                    }
-                }
-                result[i] = bestIndex
+                result[i] = cache.getOrPut(rgb) { nearestColorIndex(rgb, palette) }
             }
             return result
+        }
+
+        private fun nearestColorIndex(rgb: Int, palette: IntArray): Int {
+            val r = (rgb shr 16) and 0xFF
+            val g = (rgb shr 8) and 0xFF
+            val b = rgb and 0xFF
+            var bestIndex = 0
+            var bestDist = Int.MAX_VALUE
+            for (j in palette.indices) {
+                val pr = (palette[j] shr 16) and 0xFF
+                val pg = (palette[j] shr 8) and 0xFF
+                val pb = palette[j] and 0xFF
+                val dr = r - pr
+                val dg = g - pg
+                val db = b - pb
+                val dist = dr * dr + dg * dg + db * db
+                if (dist < bestDist) {
+                    bestDist = dist
+                    bestIndex = j
+                    if (dist == 0) break
+                }
+            }
+            return bestIndex
         }
 
         private fun getColorTableSize(colorCount: Int): Int {
