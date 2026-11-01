@@ -21,6 +21,8 @@ import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.util.TypedValue
+import android.widget.LinearLayout
 import android.widget.PopupWindow
 import android.widget.TextView
 import android.widget.Toast
@@ -73,12 +75,16 @@ class MainActivity : AppCompatActivity() {
     private var loadJob: Job? = null
     private var isMultiSelect = false
 
+    /** 隐私视频 path -> MediaStore content Uri 映射（缩略图/播放/删除均优先用 Uri） */
+    private val privacyUriMap = mutableMapOf<String, Uri>()
+
     // 权限请求
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
         if (permissions.values.all { it }) {
             loadAllVideos()
+            maybeGuidePrivacyPermission()
         } else {
             Toast.makeText(this, "需要存储权限才能访问视频文件", Toast.LENGTH_LONG).show()
             // 引导去设置
@@ -100,8 +106,32 @@ class MainActivity : AppCompatActivity() {
         setupViews()
         setupListeners()
         checkPermissionAndLoad()
-        // 确保工作目录有 .nomedia（避免隐私视频被系统相册扫描）
+        // 确保工作目录没有 .nomedia（有它会阻止媒体库索引私密视频）
         ensureNomedia()
+    }
+
+    /**
+     * 首次安装时引导用户授予「所有文件访问」权限。
+     * 私密视频文件夹是公共目录（Download/VideoWatch）：
+     * - 查看/播放已导入的私密视频：只需普通读取权限（MediaStore），不强制要求；
+     * - 新增/迁移/删除私密视频、清理 .nomedia：必须「所有文件访问」权限。
+     * 每次安装仅提示一次，用户可稍后在 设置 中再次授予。
+     */
+    private fun maybeGuidePrivacyPermission() {
+        if (backupReady()) return
+        val key = "guided_manage_perm"
+        if (prefs.getBoolean(key, false)) return
+        prefs.edit().putBoolean(key, true).apply()
+        AlertDialog.Builder(this)
+            .setTitle("授权私密视频文件夹")
+            .setMessage(
+                "私密视频保存在：${appVideoDir.absolutePath}\n\n" +
+                    "为了能够导入/迁移/删除私密视频，需要授予「所有文件访问」权限。\n" +
+                    "（不授权也可查看和播放已有的私密视频）"
+            )
+            .setPositiveButton("去授予") { _, _ -> openManageAllFilesAccess() }
+            .setNegativeButton("暂不", null)
+            .show()
     }
 
     // ==================== 全屏沉浸 ====================
@@ -213,30 +243,70 @@ class MainActivity : AppCompatActivity() {
             Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
             // API 29 以下不需要存储权限也能读取
             loadAllVideos()
-            maybeHintPrivacyPermission()
+            maybeGuidePrivacyPermission()
         } else {
             permissionLauncher.launch(arrayOf(permission))
         }
     }
 
-    /**
-     * 私密视频目录默认为公共文件夹（Download/VideoWatch）。
-     * Android 11+ 读取公共目录需要「所有文件访问」权限，否则私密视频列表会为空。
-     * 首次启动时给出一次提示，引导用户去设置授予权限。
-     */
-    private fun maybeHintPrivacyPermission() {
-        if (backupReady()) return
-        val key = "hinted_privacy_perm"
-        if (prefs.getBoolean(key, false)) return
-        prefs.edit().putBoolean(key, true).apply()
-        Toast.makeText(
-            this,
-            "如需加载「私密视频」，请在设置中授予「所有文件访问」权限",
-            Toast.LENGTH_LONG
-        ).show()
-    }
-
     // ==================== 加载视频列表 ====================
+
+    /**
+     * 读取私密视频目录（公共文件夹 Download/VideoWatch）下的视频，两个来源合并去重：
+     * 1) File 直接列目录（已授予「所有文件访问」时可用，能覆盖未被媒体库索引的文件）；
+     * 2) MediaStore 查询（只需 READ_MEDIA_VIDEO 普通权限，重装后即可恢复显示；
+     *    若目录中残留 .nomedia 会导致媒体库不索引，此时来源 1 可兜底，且 ensureNomedia 会清掉 .nomedia）。
+     * 返回：隐私视频 File 列表，以及 path -> content Uri 映射（用于缩略图/播放/删除）。
+     */
+    private fun queryPrivacyVideos(): Pair<List<File>, Map<String, Uri>> {
+        val files = LinkedHashMap<String, File>() // path -> file，按路径去重
+        val uriMap = mutableMapOf<String, Uri>()
+        val dirPath = appVideoDir.absolutePath
+
+        // 来源 1：File 直接读取
+        try {
+            appVideoDir.listFiles()?.forEach { f ->
+                if (!f.isDirectory && !f.name.startsWith(".") &&
+                    isVideoFile(f) && !f.name.endsWith(".enc")
+                ) {
+                    files[f.absolutePath] = f
+                }
+            }
+        } catch (_: Exception) {
+        }
+
+        // 来源 2：MediaStore 查询
+        val projection = arrayOf(
+            MediaStore.Video.Media._ID,
+            MediaStore.Video.Media.DATA,
+            MediaStore.Video.Media.DISPLAY_NAME
+        )
+        val selection = "${MediaStore.Video.Media.DATA} LIKE ?"
+        val selectionArgs = arrayOf("$dirPath/%")
+        try {
+            contentResolver.query(
+                MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                projection, selection, selectionArgs, null
+            )?.use { c ->
+                val idIdx = c.getColumnIndexOrThrow(MediaStore.Video.Media._ID)
+                val dataIdx = c.getColumnIndexOrThrow(MediaStore.Video.Media.DATA)
+                while (c.moveToNext()) {
+                    val path = c.getString(dataIdx) ?: continue
+                    val file = File(path)
+                    if (file.exists() && file.isFile && isVideoFile(file) && !file.name.endsWith(".enc")) {
+                        files[path] = file
+                        val id = c.getLong(idIdx)
+                        uriMap[path] = ContentUris.withAppendedId(
+                            MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id
+                        )
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "queryPrivacyVideos 异常", e)
+        }
+        return files.values.toList() to uriMap
+    }
 
     private fun loadAllVideos() {
         loadJob?.cancel()
@@ -244,24 +314,17 @@ class MainActivity : AppCompatActivity() {
             binding.progressBar.post { binding.progressBar.visibility = View.VISIBLE }
 
             // 0. 清理历史遗留的 .enc 文件（加密功能已移除，按用户选择直接丢弃，不保留）
-
             cleanupLegacyEnc()
 
-            // 1. 加载隐私视频（App 私有目录中的普通视频文件）
-            val privacyList = mutableListOf<File>()
-            if (appVideoDir.exists()) {
-                appVideoDir.listFiles()?.forEach { file ->
-                    if (!file.isDirectory && !file.name.startsWith(".") &&
-                        isVideoFile(file) && !file.name.endsWith(".enc")
-                    ) {
-                        privacyList.add(file)
-                    }
-                }
-            }
+            // 1. 加载隐私视频（通过 MediaStore 读取我们设定的公共文件夹，无需“所有文件访问”权限）
+            val (privacyList, privacyUris) = queryPrivacyVideos()
+            privacyUriMap.clear()
+            privacyUriMap.putAll(privacyUris)
 
-            // 2. 从MediaStore加载所有设备视频
+            // 2. 从 MediaStore 加载所有设备视频，并隐藏已在隐私目录中的同名项（避免重复显示）
             albumUriMap.clear()
-            val albumList = queryMediaStoreVideos(albumUriMap)
+            val privateFileNames = privacyList.map { it.name }.toSet()
+            val albumList = queryMediaStoreVideos(albumUriMap, privateFileNames)
 
             withContext(Dispatchers.Main) {
                 albumVideos.clear()
@@ -269,7 +332,8 @@ class MainActivity : AppCompatActivity() {
                 privacyVideos.clear()
                 privacyVideos.addAll(privacyList)
 
-                adapter.setAlbumUriMap(albumUriMap)
+                // 缩略图统一用 content Uri 取帧更可靠（相册 + 隐私合并）
+                adapter.setAlbumUriMap(albumUriMap + privacyUriMap)
 
                 binding.progressBar.visibility = View.GONE
                 switchTab()
@@ -277,18 +341,11 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun queryMediaStoreVideos(uriMap: MutableMap<String, Uri>): List<File> {
+    private fun queryMediaStoreVideos(
+        uriMap: MutableMap<String, Uri>,
+        privateFileNames: Set<String>
+    ): List<File> {
         val files = mutableListOf<File>()
-        // 收集隐私目录（App 私有目录）中所有视频文件名，用于在相册中隐藏同名原文件
-        val privateFileNames = mutableSetOf<String>()
-        if (appVideoDir.exists()) {
-            appVideoDir.listFiles()?.forEach { f ->
-                if (!f.isDirectory && !f.name.startsWith(".")) {
-                    // App 私有目录中的视频副本，需要在相册中隐藏同名的原文件，避免重复显示
-                    privateFileNames.add(f.name)
-                }
-            }
-        }
         try {
             val projection = arrayOf(
                 MediaStore.Video.Media._ID,
@@ -758,6 +815,8 @@ class MainActivity : AppCompatActivity() {
     private fun playVideo(file: File) {
         val intent = Intent(this, PlayerActivity::class.java).apply {
             putExtra("video_path", file.absolutePath)
+            // 隐私视频通过 MediaStore content Uri 播放，无需“所有文件访问”权限
+            privacyUriMap[file.absolutePath]?.let { putExtra("video_uri", it.toString()) }
         }
         startActivity(intent)
     }
@@ -1076,11 +1135,18 @@ class MainActivity : AppCompatActivity() {
             val originalsToDeleteUris = mutableListOf<Uri>()
             for (file in files) {
                 try {
-                    if (file.exists()) file.delete()
-                    deleted++
-                    // 相册视频：同时删除系统相册中的原文件
-                    if (!file.absolutePath.startsWith(appVideoDir.absolutePath)) {
-                        getMediaStoreUriForFile(file)?.let { originalsToDeleteUris.add(it) }
+                    // 隐私视频优先用 MediaStore content Uri 删除（无需“所有文件访问”权限）
+                    val privacyUri = privacyUriMap[file.absolutePath]
+                    if (privacyUri != null) {
+                        originalsToDeleteUris.add(privacyUri)
+                        deleted++
+                    } else {
+                        if (file.exists()) file.delete()
+                        deleted++
+                        // 相册视频：同时删除系统相册中的原文件
+                        if (!file.absolutePath.startsWith(appVideoDir.absolutePath)) {
+                            getMediaStoreUriForFile(file)?.let { originalsToDeleteUris.add(it) }
+                        }
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "删除失败: ${file.name}", e)
@@ -1124,11 +1190,12 @@ class MainActivity : AppCompatActivity() {
     // ==================== 存储权限 ====================
 
     private fun ensureNomedia() {
-        // 私密视频文件夹默认在公共存储（Download/VideoWatch），加 .nomedia 可避免被系统相册扫描到。
-        // 公共目录需要「所有文件访问」权限才能创建，无权限时静默跳过（仍由 privateFileNames 按名隐藏）。
+        // 私密视频现在通过 MediaStore 读取，若目录里有 .nomedia 会导致 MediaStore 不扫描这些视频，
+        // 从而列表为空。因此这里不再创建 .nomedia，并清掉历史遗留的 .nomedia，让媒体库能索引到它们。
+        // 为避免在 App 内“相册视频”页与“隐私视频”页重复显示，已在相册查询中按文件名隐藏同名隐私项。
         val nomedia = File(appVideoDir, ".nomedia")
-        if (!nomedia.exists()) {
-            try { nomedia.createNewFile() } catch (_: Exception) {}
+        if (nomedia.exists()) {
+            try { nomedia.delete() } catch (_: Exception) {}
         }
     }
 
@@ -1169,37 +1236,76 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** 设置对话框（含私密视频文件夹的跳转与更换） */
+    /**
+     * 设置弹窗：状态 + 当前私密视频文件夹路径 + 三个操作入口。
+     * 使用自定义布局（部分 ROM 上 setItems 与 setMessage 同用会导致列表不渲染）。
+     */
     private fun showSettingsDialog() {
         val current = appVideoDir.absolutePath
         val status = if (backupReady()) "已授予「所有文件访问」权限" else "尚未授予「所有文件访问」权限"
-        val msg = "$status\n\n当前私密视频文件夹：\n$current"
-        val items = arrayOf(
-            "打开私密视频文件夹",
-            "选择/更换私密视频文件夹",
-            "授予所有文件访问权限"
-        )
-        AlertDialog.Builder(this)
-            .setTitle("设置")
-            .setMessage(msg)
-            .setItems(items) { _, which ->
-                when (which) {
-                    0 -> openFolderJump()
-                    1 -> pickFolderLauncher.launch(null)
-                    2 -> openManageAllFilesAccess()
-                }
+        val density = resources.displayMetrics.density
+        val pad = (20 * density).toInt()
+
+        var dialogRef: AlertDialog? = null
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(pad, pad, pad, 0)
+            addView(TextView(context).apply {
+                text = "$status\n\n当前私密视频文件夹：\n$current"
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            })
+            fun menuItem(label: String, onClick: () -> Unit) {
+                addView(TextView(context).apply {
+                    text = label
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+                    val vPad = (12 * density).toInt()
+                    setPadding(0, vPad, 0, vPad)
+                    setOnClickListener {
+                        dialogRef?.dismiss()
+                        onClick()
+                    }
+                })
             }
+            menuItem("打开私密视频文件夹") { openFolderJump() }
+            menuItem("选择/更换私密视频文件夹") { pickFolderLauncher.launch(null) }
+            menuItem("授予所有文件访问权限") { openManageAllFilesAccess() }
+        }
+
+        dialogRef = AlertDialog.Builder(this)
+            .setTitle("设置")
+            .setView(container)
             .setNegativeButton("取消", null)
             .show()
     }
 
     /**
-     * 跳转/打开当前私密视频文件夹：用系统目录选择器定位到该文件夹，便于手动管理文件。
-     * 通过 EXTRA_INITIAL_URI 直接定位到我们设定的文件夹（仅支持内部存储）。
+     * 打开当前私密视频文件夹（Download/VideoWatch）用于查看/管理文件。
+     * 优先用系统文件管理器直接打开该文件夹（语义上的“打开”，必定落在我们设定的目录）；
+     * 若设备上没有可处理的应用，再退化为系统目录选择器并尽量定位到该文件夹。
      */
     private fun openFolderJump() {
+        val path = appVideoDir.absolutePath
+        // 构造该文件夹对应的 document Uri（仅内部存储）
+        val rest = path.removePrefix("/storage/emulated/0/").trimStart('/')
+        val docUri = DocumentsContract.buildDocumentUri(
+            "com.android.externalstorage.documents", "primary:$rest"
+        )
+        val viewIntent = Intent(Intent.ACTION_VIEW, docUri).apply {
+            addCategory(Intent.CATEGORY_DEFAULT)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        if (viewIntent.resolveActivity(packageManager) != null) {
+            try {
+                startActivity(viewIntent)
+                return
+            } catch (_: Exception) {
+                // 退化到目录选择器
+            }
+        }
+        // 退化：系统目录选择器，并尽量定位到该文件夹
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-            val treeUri = pathToTreeUri(appVideoDir.absolutePath)
+            val treeUri = pathToTreeUri(path)
             if (treeUri != null) {
                 putExtra(DocumentsContract.EXTRA_INITIAL_URI, treeUri)
             }

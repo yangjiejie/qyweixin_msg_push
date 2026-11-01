@@ -71,6 +71,7 @@ class PlayerActivity : AppCompatActivity() {
     private var isPlaying = false
     private var isSingleLoop = true
     private var videoUri: Uri? = null
+    private var isCurrentPrivacy = false
     private var videoFileName: String = ""
     private var videoPath: String = ""
     private var currentSpeed = 1.0f
@@ -354,15 +355,42 @@ class PlayerActivity : AppCompatActivity() {
         }
         videoPath = path
         val videoFile = File(path)
-        if (!videoFile.exists()) {
-            Toast.makeText(this, "视频文件不存在", Toast.LENGTH_SHORT).show()
+        // 若主界面传来了 MediaStore content Uri（隐私视频），优先使用，避免依赖“所有文件访问”权限
+        val uriStr = intent.getStringExtra("video_uri")
+        val contentUri = if (!uriStr.isNullOrEmpty()) Uri.parse(uriStr) else null
+
+        val accessible = if (contentUri != null) {
+            try {
+                contentResolver.openFileDescriptor(contentUri, "r")?.close()
+                true
+            } catch (_: Exception) {
+                false
+            }
+        } else {
+            videoFile.exists()
+        }
+        if (!accessible) {
+            Toast.makeText(this, "视频文件不存在或无法访问", Toast.LENGTH_SHORT).show()
             finish()
             return
         }
-        videoUri = Uri.fromFile(videoFile)
-        videoFileName = videoFile.name
+        videoUri = contentUri ?: Uri.fromFile(videoFile)
+        isCurrentPrivacy = contentUri != null
+        videoFileName = if (contentUri != null) getDisplayName(contentUri) ?: videoFile.name else videoFile.name
         tvFileName.text = videoFileName
         initializePlayer()
+    }
+
+    /** 从 content Uri 取显示名（隐私视频可能没有真实文件名可依赖） */
+    private fun getDisplayName(uri: Uri): String? {
+        return try {
+            contentResolver.query(uri, arrayOf(MediaStore.Video.Media.DISPLAY_NAME), null, null, null)
+                ?.use { c ->
+                    if (c.moveToFirst()) c.getString(c.getColumnIndexOrThrow(MediaStore.Video.Media.DISPLAY_NAME)) else null
+                }
+        } catch (_: Exception) {
+            null
+        }
     }
 
     // ==================== 播放器 ====================
@@ -906,12 +934,25 @@ class PlayerActivity : AppCompatActivity() {
             .show()
     }
 
-    /** 隐私视频存放在 App 私有目录（Android/data/包名/files）下 */
-    private fun isPrivacyVideo(path: String): Boolean = path.contains("/Android/data/")
+    /** 隐私视频通过 MediaStore content Uri 传入（位于公共文件夹 Download/VideoWatch） */
+    private fun isPrivacyVideo(path: String): Boolean = isCurrentPrivacy
 
     private fun doDeleteCurrentVideo(isPrivacy: Boolean) {
         if (isPrivacy) {
-            // 隐私视频位于 App 私有目录，可直接删除文件
+            // 优先用 MediaStore content Uri 删除（无需“所有文件访问”权限，系统会弹确认框）
+            val uri = if (videoUri?.scheme == "content") videoUri else getMediaStoreUriForPath(videoPath)
+            if (uri != null) {
+                try {
+                    val request = MediaStore.createDeleteRequest(contentResolver, listOf(uri))
+                    mediaDeleteLauncher.launch(
+                        IntentSenderRequest.Builder(request.intentSender).build()
+                    )
+                } catch (e: Exception) {
+                    Toast.makeText(this, "删除申请失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
+                return
+            }
+            // 退化：直接删除文件（可能需要“所有文件访问”权限）
             try {
                 if (!File(videoPath).delete()) {
                     Toast.makeText(this, "删除失败", Toast.LENGTH_SHORT).show()
