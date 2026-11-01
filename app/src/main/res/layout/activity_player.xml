@@ -3,7 +3,8 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#FF000000">
+    android:background="#FF000000"
+    android:fitsSystemWindows="true">
 
     <!-- 视频 View -->
     <com.videowatch.app.player.ZoomableVideoView
@@ -23,7 +24,7 @@
         android:gravity="center_vertical"
         android:orientation="horizontal"
         android:paddingHorizontal="8dp"
-        android:paddingTop="24dp">
+        android:paddingTop="0dp">
 
         <ImageButton
             android:id="@+id/btnBack"

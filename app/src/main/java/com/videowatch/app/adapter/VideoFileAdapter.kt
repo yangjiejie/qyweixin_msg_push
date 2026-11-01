@@ -1,8 +1,7 @@
 package com.videowatch.app.adapter
 
 import android.graphics.Bitmap
-import android.media.MediaMetadataRetriever
-import android.media.ThumbnailUtils
+import android.net.Uri
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -14,7 +13,6 @@ import android.widget.TextView
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.RecyclerView
 import com.videowatch.app.R
-import com.videowatch.app.crypto.VideoEncryptor
 import com.videowatch.app.utils.VideoThumbs
 import java.io.File
 import java.text.SimpleDateFormat
@@ -22,10 +20,6 @@ import java.util.Date
 import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
-
-/** 缩略图目标尺寸（对应视图 72x48 dp，xhdpi 下 144x96 px），固定比例不变形 */
-private const val THUMB_TARGET_W = 144
-private const val THUMB_TARGET_H = 96
 
 /**
  * 视频文件列表适配器，支持缩略图加载
@@ -56,6 +50,12 @@ class VideoFileAdapter(
     private val thumbnailExecutor = Executors.newFixedThreadPool(2)
     private val pendingFutures = HashMap<String, Future<*>?>()
 
+    /** 相册视频 path -> MediaStore content Uri 映射（缩略图按 Uri 取帧更可靠） */
+    private var albumUriMap: Map<String, Uri> = emptyMap()
+    fun setAlbumUriMap(map: Map<String, Uri>) {
+        albumUriMap = map
+    }
+
     class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
         val checkbox: CheckBox = view.findViewById(R.id.checkbox)
         val ivThumbnail: ImageView = view.findViewById(R.id.ivThumbnail)
@@ -77,11 +77,7 @@ class VideoFileAdapter(
         val context = holder.itemView.context
 
         // 文件名 - 最多显示20个字符，超出截断
-        val rawName = if (VideoEncryptor.isEncrypted(file)) {
-            VideoEncryptor.getDecryptedFileName(file) ?: file.name
-        } else {
-            file.name
-        }
+        val rawName = file.name
         val displayName = if (rawName.length > 20) {
             rawName.take(17) + "..."
         } else {
@@ -92,11 +88,10 @@ class VideoFileAdapter(
         // 文件信息
         val sizeStr = formatFileSize(file.length())
         val dateStr = dateFormat.format(Date(file.lastModified()))
-        val statusStr = if (VideoEncryptor.isEncrypted(file)) "已加密" else "已解密"
-        holder.tvFileInfo.text = "$sizeStr  •  $dateStr  •  $statusStr"
+        holder.tvFileInfo.text = "$sizeStr  •  $dateStr"
 
-        // 加密状态图标
-        if (VideoEncryptor.isEncrypted(file)) {
+        // 隐私视频标识（位于 App 私有目录的视频标记为“隐私”）
+        if (file.absolutePath.contains("/Android/data/")) {
             holder.ivLock.visibility = View.VISIBLE
             holder.ivLock.setImageResource(R.drawable.ic_lock)
         } else {
@@ -125,6 +120,9 @@ class VideoFileAdapter(
             if (!isSelectionMode) {
                 enterSelectionMode()
                 toggleSelection(position, holder.checkbox)
+            } else {
+                // 已在批量选择状态：长按退出批量模式
+                exitSelectionMode()
             }
             true
         }
@@ -136,7 +134,7 @@ class VideoFileAdapter(
             onSelectionChanged(selectedPositions.size)
         }
 
-        // 批量/迁移模式下显示“更多”菜单按钮（相册与加密视频都有该功能）
+        // 批量/迁移模式下显示“更多”菜单按钮（相册与隐私视频都有该功能）
         if (showItemMenu) {
             holder.btnMore.visibility = View.VISIBLE
             holder.btnMore.setOnClickListener {
@@ -151,45 +149,7 @@ class VideoFileAdapter(
     private fun loadThumbnail(file: File, holder: ViewHolder) {
         val filePath = file.absolutePath
 
-        // 已加密文件：解密到缓存再抽帧（结果以磁盘缓存复用，避免每次解密整个文件）
-        if (VideoEncryptor.isEncrypted(file)) {
-            holder.ivThumbnail.setImageResource(0)
-            holder.ivThumbnail.setBackgroundColor(0xFF2A2A3E.toInt())
-            if (thumbnailCache.containsKey(filePath)) {
-                thumbnailCache[filePath]?.let {
-                    holder.ivThumbnail.setImageBitmap(it)
-                    holder.ivPlayOverlay.visibility = View.VISIBLE
-                }
-                return
-            }
-            pendingFutures[filePath]?.let { future ->
-                if (!future.isDone) future.cancel(true)
-            }
-            val future = thumbnailExecutor.submit {
-                try {
-                    if (Thread.currentThread().isInterrupted) return@submit
-                    val bitmap = VideoThumbs.thumbForEncrypted(holder.itemView.context, file)
-                    if (!Thread.currentThread().isInterrupted) {
-                        thumbnailCache[filePath] = bitmap
-                        holder.itemView.post {
-                            val currentFile = if (holder.bindingAdapterPosition in 0 until files.size) {
-                                files[holder.bindingAdapterPosition]
-                            } else null
-                            if (currentFile?.absolutePath == filePath && bitmap != null) {
-                                holder.ivThumbnail.setImageBitmap(bitmap)
-                                holder.ivPlayOverlay.visibility = View.VISIBLE
-                            }
-                        }
-                    }
-                } catch (_: Exception) {
-                    thumbnailCache[filePath] = null
-                }
-            }
-            pendingFutures[filePath] = future
-            return
-        }
-
-        // 先检查缓存
+        // 内存缓存
         if (thumbnailCache.containsKey(filePath)) {
             val cached = thumbnailCache[filePath]
             if (cached != null) {
@@ -208,36 +168,22 @@ class VideoFileAdapter(
             if (!future.isDone) future.cancel(true)
         }
 
-        // 异步加载缩略图
+        // 异步加载缩略图（优先用 MediaStore content Uri，普通视频直接按路径）
         val future = thumbnailExecutor.submit {
             try {
                 if (Thread.currentThread().isInterrupted) return@submit
-                val retriever = MediaMetadataRetriever()
-                retriever.setDataSource(filePath)
-                // 提取1秒处的帧作为缩略图
-                val bitmap = retriever.getFrameAtTime(
-                    1_000_000, // 1秒
-                    MediaMetadataRetriever.OPTION_CLOSEST_SYNC
+                val bitmap = VideoThumbs.thumbForVideo(
+                    holder.itemView.context, file, albumUriMap[filePath]
                 )
-                retriever.release()
-
-                // 固定长宽比缩略图（144x96 = 视图 72x48），extractThumbnail 会保持原比例居中裁切，不变形
-                val thumbnail = if (bitmap != null && bitmap.width > 0) {
-                    val scaled = ThumbnailUtils.extractThumbnail(bitmap, THUMB_TARGET_W, THUMB_TARGET_H, ThumbnailUtils.OPTIONS_RECYCLE_INPUT)
-                    scaled
-                } else null
-
                 if (!Thread.currentThread().isInterrupted) {
-                    thumbnailCache[filePath] = thumbnail
-                    // 在主线程更新UI
+                    thumbnailCache[filePath] = bitmap
                     holder.itemView.post {
                         val currentFile = if (holder.bindingAdapterPosition in 0 until files.size) {
                             files[holder.bindingAdapterPosition]
                         } else null
                         if (currentFile?.absolutePath == filePath) {
-                            if (thumbnail != null) {
-                                holder.ivThumbnail.setImageBitmap(thumbnail)
-                                holder.ivThumbnail.setBackgroundColor(0xFF2A2A3E.toInt())
+                            if (bitmap != null) {
+                                holder.ivThumbnail.setImageBitmap(bitmap)
                                 holder.ivPlayOverlay.visibility = View.VISIBLE
                             }
                         }
@@ -267,9 +213,6 @@ class VideoFileAdapter(
         pendingFutures.keys.removeAll { !newPaths.contains(it) }
         notifyDataSetChanged()
     }
-
-    /** 当前列表是否全部为加密视频（用于决定是否显示“移动到相册”按钮） */
-    fun isAllEncrypted(): Boolean = files.isNotEmpty() && files.all { VideoEncryptor.isEncrypted(it) }
 
     fun enterSelectionMode() {
         isSelectionMode = true

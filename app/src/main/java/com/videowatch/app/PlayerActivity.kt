@@ -11,7 +11,6 @@ import android.os.Bundle
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
-import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.view.LayoutInflater
 import android.view.MotionEvent
@@ -26,13 +25,11 @@ import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import androidx.documentfile.provider.DocumentFile
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
-import com.videowatch.app.crypto.VideoEncryptor
 import com.videowatch.app.player.ZoomableVideoView
 import com.videowatch.app.utils.AudioExtractor
 import com.videowatch.app.utils.GifMaker
@@ -122,9 +119,6 @@ class PlayerActivity : AppCompatActivity() {
 
     // 屏幕方向
     private var isLandscape = false
-    // 是否正在解密播放
-    private var isDecryptedTemp = false
-    private var tempDecryptFile: File? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -134,20 +128,8 @@ class PlayerActivity : AppCompatActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         initViews()
-        // 状态栏高度补偿，避免标题被遮挡
-        topBar.post {
-            val resourceId = resources.getIdentifier("status_bar_height", "dimen", "android")
-            val statusBarHeight = if (resourceId > 0) resources.getDimensionPixelSize(resourceId) else 0
-            topBar.setPadding(
-                topBar.paddingLeft,
-                topBar.paddingTop + statusBarHeight,
-                topBar.paddingRight,
-                topBar.paddingBottom
-            )
-        }
         setupListeners()
         handleIntent()
-        initializePlayer()
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
@@ -365,41 +347,22 @@ class PlayerActivity : AppCompatActivity() {
     // ==================== 意图处理 ====================
 
     private fun handleIntent() {
-        val path = intent.getStringExtra("video_path") ?: return
-        videoPath = path
-        val isEncrypted = intent.getBooleanExtra("is_encrypted", false)
-
-        if (isEncrypted) {
-            // 解密到临时文件再播放
-            decryptAndPlay(path)
-        } else {
-            val videoFile = File(path)
-            videoUri = Uri.fromFile(videoFile)
-            videoFileName = videoFile.name
-            tvFileName.text = videoFileName
-        }
-    }
-
-    private fun decryptAndPlay(encryptedPath: String) {
-        try {
-            val cacheDir = cacheDir
-            val encFile = File(encryptedPath)
-            val tempFile = File(cacheDir, encFile.nameWithoutExtension + "_dec_" + System.currentTimeMillis() + ".mp4")
-            val success = com.videowatch.app.crypto.VideoEncryptor.decryptToFile(encryptedPath, tempFile.absolutePath)
-            if (success) {
-                isDecryptedTemp = true
-                tempDecryptFile = tempFile
-                videoUri = Uri.fromFile(tempFile)
-                videoFileName = encFile.name
-                tvFileName.text = videoFileName
-            } else {
-                Toast.makeText(this, "解密失败", Toast.LENGTH_SHORT).show()
-                finish()
-            }
-        } catch (e: Exception) {
-            Toast.makeText(this, "播放失败: ${e.message}", Toast.LENGTH_SHORT).show()
+        val path = intent.getStringExtra("video_path") ?: run {
+            Toast.makeText(this, "无法播放此视频", Toast.LENGTH_SHORT).show()
             finish()
+            return
         }
+        videoPath = path
+        val videoFile = File(path)
+        if (!videoFile.exists()) {
+            Toast.makeText(this, "视频文件不存在", Toast.LENGTH_SHORT).show()
+            finish()
+            return
+        }
+        videoUri = Uri.fromFile(videoFile)
+        videoFileName = videoFile.name
+        tvFileName.text = videoFileName
+        initializePlayer()
     }
 
     // ==================== 播放器 ====================
@@ -785,8 +748,7 @@ class PlayerActivity : AppCompatActivity() {
         endMs: Long,
         formats: List<AudioExtractor.OutFormat>
     ) {
-        // 加密视频播放的是解密后的临时文件，直接用它作为截取源
-        val inputPath = tempDecryptFile?.absolutePath ?: videoPath
+        val inputPath = videoPath
         if (inputPath.isEmpty()) {
             Toast.makeText(this, "无法获取视频文件", Toast.LENGTH_SHORT).show()
             return
@@ -863,8 +825,7 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private fun startVideoClip(startMs: Long, endMs: Long) {
-        // 加密视频播放的是解密后的临时文件，直接用它作为截取源
-        val inputPath = tempDecryptFile?.absolutePath ?: videoPath
+        val inputPath = videoPath
         if (inputPath.isEmpty()) {
             Toast.makeText(this, "无法获取视频文件", Toast.LENGTH_SHORT).show()
             return
@@ -917,10 +878,6 @@ class PlayerActivity : AppCompatActivity() {
         player?.stop()
         player?.release()
         player = null
-        // 清理解密临时文件
-        tempDecryptFile?.let {
-            try { it.delete() } catch (_: Exception) {}
-        }
         finish()
     }
 
@@ -939,28 +896,32 @@ class PlayerActivity : AppCompatActivity() {
 
     private fun deleteCurrentVideo() {
         val name = videoFileName
-        val isEnc = VideoEncryptor.isEncrypted(File(videoPath))
-        val msg = if (isEnc) "确定删除加密视频「$name」？\n（同时删除其备份副本）" else "确定从设备相册删除视频「$name」？"
+        val isPrivacy = isPrivacyVideo(videoPath)
+        val msg = if (isPrivacy) "确定删除隐私视频「$name」？" else "确定从设备相册删除视频「$name」？"
         AlertDialog.Builder(this)
             .setTitle("删除视频")
             .setMessage(msg)
-            .setPositiveButton("删除") { _, _ -> doDeleteCurrentVideo(isEnc) }
+            .setPositiveButton("删除") { _, _ -> doDeleteCurrentVideo(isPrivacy) }
             .setNegativeButton("取消", null)
             .show()
     }
 
-    private fun doDeleteCurrentVideo(isEnc: Boolean) {
-        if (isEnc) {
-            // 加密视频位于 App 私有目录，可直接删除文件 + 备份副本
-            val file = File(videoPath)
+    /** 隐私视频存放在 App 私有目录（Android/data/包名/files）下 */
+    private fun isPrivacyVideo(path: String): Boolean = path.contains("/Android/data/")
+
+    private fun doDeleteCurrentVideo(isPrivacy: Boolean) {
+        if (isPrivacy) {
+            // 隐私视频位于 App 私有目录，可直接删除文件
             try {
-                file.delete()
-                deleteBackupMirror(file.name)
+                if (!File(videoPath).delete()) {
+                    Toast.makeText(this, "删除失败", Toast.LENGTH_SHORT).show()
+                    return
+                }
             } catch (e: Exception) {
                 Toast.makeText(this, "删除失败: ${e.message}", Toast.LENGTH_SHORT).show()
                 return
             }
-            Toast.makeText(this, "已删除加密视频", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "已删除", Toast.LENGTH_SHORT).show()
             exitPlayer()
         } else {
             // 相册视频：通过 MediaStore 申请删除，不破坏其他数据
@@ -984,27 +945,6 @@ class PlayerActivity : AppCompatActivity() {
                 Toast.makeText(this, "删除申请失败: ${e.message}", Toast.LENGTH_SHORT).show()
             }
         }
-    }
-
-    /** 删除备份目录中的同名 .enc 副本（用户自选的 SAF 备份目录） */
-    private fun deleteBackupMirror(name: String) {
-        // 先记录“墓碑”：部分 ROM 上删除备份副本会失败，
-        // 若不记录，下次主界面刷新会把刚删掉的视频又从备份恢复回来
-        try {
-            val prefs = getSharedPreferences("videowatch_prefs", MODE_PRIVATE)
-            val names = prefs.getStringSet("deleted_backup_names", emptySet())?.toMutableSet()
-                ?: mutableSetOf()
-            names.add(name)
-            prefs.edit().putStringSet("deleted_backup_names", names).apply()
-        } catch (_: Exception) {}
-        try {
-            val prefs = getSharedPreferences("videowatch_prefs", MODE_PRIVATE)
-            val s = prefs.getString("backup_tree_uri", null) ?: return
-            val treeUri = Uri.parse(s)
-            val tree = DocumentFile.fromTreeUri(this, treeUri) ?: return
-            val target = tree.findFile(name) ?: return
-            if (target.exists()) DocumentsContract.deleteDocument(contentResolver, target.uri)
-        } catch (_: Exception) {}
     }
 
     /** 根据文件路径在 MediaStore 中查找视频 Uri */
@@ -1049,8 +989,5 @@ class PlayerActivity : AppCompatActivity() {
         player = null
         gifExecutor.shutdownNow()
         audioExecutor.shutdownNow()
-        tempDecryptFile?.let {
-            try { it.delete() } catch (_: Exception) {}
-        }
     }
 }

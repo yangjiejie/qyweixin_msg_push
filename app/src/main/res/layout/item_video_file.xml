@@ -31,7 +31,7 @@
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintBottom_toBottomOf="parent" />
 
-    <!-- 更多操作（仅加密视频页签显示） -->
+    <!-- 更多操作（相册与隐私视频页签都显示） -->
     <ImageButton
         android:id="@+id/btnMore"
         android:layout_width="32dp"
@@ -90,13 +90,13 @@
             tools:text="128 MB • 2024-01-15" />
     </LinearLayout>
 
-    <!-- 加密状态图标 -->
+    <!-- 隐私视频标识图标 -->
     <ImageView
         android:id="@+id/ivLock"
         android:layout_width="32dp"
         android:layout_height="32dp"
         android:padding="4dp"
-        android:contentDescription="@string/file_encrypted"
+        android:contentDescription="@string/file_private"
         android:visibility="gone"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintTop_toTopOf="parent"

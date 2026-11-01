@@ -10,9 +10,10 @@
     <FrameLayout
         android:id="@+id/topBar"
         android:layout_width="0dp"
-        android:layout_height="56dp"
+        android:layout_height="64dp"
         android:background="@color/surface"
         android:elevation="4dp"
+        android:fitsSystemWindows="true"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
@@ -68,11 +69,12 @@
             android:padding="8dp" />
     </FrameLayout>
 
-    <!-- TabLayout: 相册视频 / 加密视频 -->
+    <!-- TabLayout: 相册视频 / 隐私视频 -->
     <com.google.android.material.tabs.TabLayout
         android:id="@+id/tabLayout"
         android:layout_width="0dp"
         android:layout_height="44dp"
+        android:layout_marginTop="2dp"
         android:background="@color/surface"
         app:tabIndicatorColor="@color/accent"
         app:tabIndicatorFullWidth="false"
@@ -91,7 +93,7 @@
         <com.google.android.material.tabs.TabItem
             android:layout_width="wrap_content"
             android:layout_height="match_parent"
-            android:text="加密视频" />
+            android:text="隐私视频" />
     </com.google.android.material.tabs.TabLayout>
 
     <!-- 视频列表 -->
@@ -223,24 +225,6 @@
             android:textSize="14sp" />
 
         <Button
-            android:id="@+id/btnBatchEncrypt"
-            style="@style/Widget.MaterialComponents.Button.TextButton"
-            android:layout_width="wrap_content"
-            android:layout_height="40dp"
-            android:text="加密保护"
-            android:textColor="@color/accent"
-            android:textSize="14sp" />
-
-        <Button
-            android:id="@+id/btnBatchDecrypt"
-            style="@style/Widget.MaterialComponents.Button.TextButton"
-            android:layout_width="wrap_content"
-            android:layout_height="40dp"
-            android:text="解密恢复"
-            android:textColor="@color/accent"
-            android:textSize="14sp" />
-
-        <Button
             android:id="@+id/btnBatchDelete"
             style="@style/Widget.MaterialComponents.Button.TextButton"
             android:layout_width="wrap_content"
@@ -259,7 +243,7 @@
             android:textSize="14sp" />
 
         <Button
-            android:id="@+id/btnBatchMoveToEncrypt"
+            android:id="@+id/btnBatchMoveToPrivacy"
             style="@style/Widget.MaterialComponents.Button.TextButton"
             android:layout_width="wrap_content"
             android:layout_height="40dp"

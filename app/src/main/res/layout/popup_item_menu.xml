@@ -12,11 +12,11 @@
         android:id="@+id/tvMenuMigrate"
         android:layout_width="match_parent"
         android:layout_height="48dp"
-        android:drawableStart="@drawable/ic_lock"
+        android:drawableStart="@drawable/ic_add_video"
         android:drawablePadding="12dp"
         android:gravity="center_vertical"
         android:paddingHorizontal="16dp"
-        android:text="迁入加密视频"
+        android:text="迁入隐私"
         android:textColor="#FFFFFFFF"
         android:textSize="15sp"
         android:background="?attr/selectableItemBackground" />

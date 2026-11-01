@@ -3,17 +3,8 @@
     <string name="app_name">视频播放器</string>
     <string name="no_videos">暂无视频文件</string>
     <string name="select_videos">选择视频</string>
-    <string name="batch_encrypt">批量加密</string>
-    <string name="batch_decrypt">批量解密</string>
-    <string name="encrypting">正在加密…</string>
-    <string name="decrypting">正在解密…</string>
-    <string name="encrypt_success">加密成功</string>
-    <string name="decrypt_success">解密成功</string>
-    <string name="encrypt_failed">加密失败</string>
-    <string name="decrypt_failed">解密失败</string>
     <string name="delete_confirm">确认删除所选文件？</string>
-    <string name="file_encrypted">已加密</string>
-    <string name="file_decrypted">已解密</string>
+    <string name="file_private">隐私视频</string>
     <string name="speed">倍速</string>
     <string name="ab_loop">AB循环</string>
     <string name="set_a">设置A点</string>
@@ -37,9 +28,9 @@
     <string name="pause">暂停</string>
     <string name="back">返回</string>
     <string name="delete">删除</string>
-    <string name="migrate_to_album">回退相册（自动解码）</string>
-    <string name="migrate_to_encrypt">迁移到加密</string>
-    <string name="batch_migrate_to_album">批量回退相册</string>
-    <string name="batch_migrate_to_encrypt">批量迁移加密</string>
+    <string name="migrate_to_album">迁回相册</string>
+    <string name="migrate_to_encrypt">迁入隐私</string>
+    <string name="batch_migrate_to_album">批量迁回相册</string>
+    <string name="batch_migrate_to_encrypt">批量迁入隐私</string>
     <string name="select_all">全选</string>
 </resources>
