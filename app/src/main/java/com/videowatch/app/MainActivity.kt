@@ -30,6 +30,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.result.IntentSenderRequest
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -144,18 +145,18 @@ class MainActivity : AppCompatActivity() {
         insetsController.systemBarsBehavior =
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
 
-        // 让 topBar 不被状态栏区域遮挡（给它多一点 padding）
-        binding.topBar.setPadding(
-            binding.topBar.paddingLeft,
-            getStatusBarHeight(),
-            binding.topBar.paddingRight,
-            binding.topBar.paddingBottom
-        )
-    }
-
-    private fun getStatusBarHeight(): Int {
-        val resourceId = resources.getIdentifier("status_bar_height", "dimen", "android")
-        return if (resourceId > 0) resources.getDimensionPixelSize(resourceId) else 0
+        // 状态栏已隐藏，顶栏不再预留整个状态栏高度（否则标题下方会多一条空黑边）。
+        // 只按真实 insets 避让：有刘海/打孔屏时留出必要的 cutout 高度，否则标题直接贴顶。
+        ViewCompat.setOnApplyWindowInsetsListener(binding.topBar) { v, insets ->
+            val cutout = insets.getInsets(WindowInsetsCompat.Type.displayCutout())
+            val status = insets.getInsets(WindowInsetsCompat.Type.statusBars())
+            // 状态栏隐藏时 status.top 通常为 0；两者取最大，仅避让物理遮挡（刘海/打孔）
+            val top = maxOf(cutout.top, status.top)
+            v.setPadding(v.paddingLeft, top, v.paddingRight, v.paddingBottom)
+            insets
+        }
+        // 立即请求一次 insets，确保监听器生效
+        ViewCompat.requestApplyInsets(binding.topBar)
     }
 
     // ==================== 初始化 ====================

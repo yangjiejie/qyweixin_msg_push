@@ -10,7 +10,9 @@ import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.TextureView
 import android.widget.FrameLayout
+import androidx.media3.common.text.Cue
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.SubtitleView
 
 /**
  * 支持缩放和画面比例调节的视频视图
@@ -29,6 +31,9 @@ class ZoomableVideoView @JvmOverloads constructor(
     }
 
     val textureView: TextureView = TextureView(context)
+
+    /** 字幕渲染层（仅用于显示内嵌/可切换的软字幕轨道，默认不渲染） */
+    private lateinit var subtitleView: SubtitleView
 
     private var minScale = 0.5f
     private var maxScale = 3f
@@ -55,12 +60,27 @@ class ZoomableVideoView @JvmOverloads constructor(
         textureView.scaleX = 1f
         textureView.scaleY = 1f
 
+        // 字幕层叠在视频之上、贴近底部；不拦截触摸，避免影响缩放/平移手势
+        subtitleView = SubtitleView(context).apply {
+            val slp = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
+            slp.gravity = Gravity.BOTTOM
+            layoutParams = slp
+            isClickable = false
+            isFocusable = false
+        }
+        addView(subtitleView)
+
         scaleGestureDetector = ScaleGestureDetector(context, ScaleListener())
         gestureDetector = GestureDetector(context, DoubleTapListener())
     }
 
     fun setPlayer(player: ExoPlayer) {
         player.setVideoTextureView(textureView)
+    }
+
+    /** 由播放器回调的字幕 cue 转发到字幕层（注意：未选择字幕轨道时 cues 为空，自动清空） */
+    fun setSubtitleCues(cues: List<Cue>) {
+        subtitleView.setCues(cues)
     }
 
     fun setVideoSize(width: Int, height: Int) {

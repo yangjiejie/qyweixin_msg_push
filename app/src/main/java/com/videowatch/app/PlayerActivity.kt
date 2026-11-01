@@ -25,6 +25,9 @@ import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
+import androidx.media3.common.C
+import androidx.media3.common.text.Cue
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
@@ -53,6 +56,7 @@ class PlayerActivity : AppCompatActivity() {
     private lateinit var btnClearAB: TextView
     private lateinit var btnSingleLoop: ImageButton
     private lateinit var btnScreenshot: ImageButton
+    private lateinit var btnSubtitle: TextView
     private lateinit var btnGif: ImageButton
     private lateinit var btnFrameForward: ImageButton
     private lateinit var btnFrameBackward: ImageButton
@@ -69,6 +73,8 @@ class PlayerActivity : AppCompatActivity() {
 
     private var player: ExoPlayer? = null
     private var isPlaying = false
+    /** 是否显示内嵌软字幕（默认关闭，与原来“不渲染字幕”的行为一致） */
+    private var subtitleEnabled = false
     private var isSingleLoop = true
     private var videoUri: Uri? = null
     private var isCurrentPrivacy = false
@@ -163,6 +169,8 @@ class PlayerActivity : AppCompatActivity() {
         btnAudio = findViewById(R.id.btnAudio)
         btnVideoClip = findViewById(R.id.btnVideoClip)
         btnHideUi = findViewById(R.id.btnHideUi)
+        btnSubtitle = findViewById(R.id.btnSubtitle)
+        updateSubtitleButton()
 
         btnSingleLoop.setImageResource(R.drawable.ic_loop_active)
         btnAspectRatio.text = aspectModeLabels[aspectRatioMode]
@@ -236,6 +244,9 @@ class PlayerActivity : AppCompatActivity() {
 
         // 截屏
         btnScreenshot.setOnClickListener { captureScreenshot() }
+
+        // 字幕开关：一键显示/隐藏内嵌软字幕
+        btnSubtitle.setOnClickListener { toggleSubtitle() }
 
         // GIF
         btnGif.setOnClickListener {
@@ -406,6 +417,10 @@ class PlayerActivity : AppCompatActivity() {
             videoView.setPlayer(p)
             p.repeatMode = Player.REPEAT_MODE_ONE
             p.setMediaItem(MediaItem.fromUri(uri))
+            // 默认禁用字幕轨道（内嵌软字幕不显示，保持原行为）
+            p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
+                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                .build()
             p.prepare()
             p.playWhenReady = true
 
@@ -437,6 +452,11 @@ class PlayerActivity : AppCompatActivity() {
                 override fun onIsPlayingChanged(playing: Boolean) {
                     isPlaying = playing
                     updatePlayPauseButton()
+                }
+
+                // 字幕 cue 转发到播放视图（未选字幕轨道时为空，自动清空）
+                override fun onCues(cues: List<Cue>) {
+                    videoView.setSubtitleCues(cues)
                 }
 
                 override fun onPlayerError(error: PlaybackException) {
@@ -631,6 +651,30 @@ class PlayerActivity : AppCompatActivity() {
         }
         bitmap.recycle()
         Toast.makeText(this, "截图已保存: $fileName", Toast.LENGTH_LONG).show()
+    }
+
+    // ==================== 字幕开关 ====================
+
+    /** 一键切换内嵌软字幕的显示/隐藏（仅对“软字幕”轨道有效；烧录进画面的硬字幕无法去除） */
+    private fun toggleSubtitle() {
+        subtitleEnabled = !subtitleEnabled
+        player?.let { p ->
+            p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
+                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !subtitleEnabled)
+                .build()
+        }
+        updateSubtitleButton()
+        Toast.makeText(
+            this,
+            if (subtitleEnabled) "已开启字幕" else "已关闭字幕",
+            Toast.LENGTH_SHORT
+        ).show()
+    }
+
+    /** 刷新字幕按钮的高亮状态（开启时高亮，关闭时灰显） */
+    private fun updateSubtitleButton() {
+        val color = if (subtitleEnabled) R.color.btn_active else R.color.text_secondary
+        btnSubtitle.setTextColor(ContextCompat.getColor(this, color))
     }
 
     // ==================== GIF ====================

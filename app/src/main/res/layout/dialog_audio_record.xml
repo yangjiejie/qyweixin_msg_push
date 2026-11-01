@@ -22,7 +22,7 @@
         android:buttonTint="@color/btn_active"
         android:checked="true"
         android:text="OGG（体积小，游戏常用）"
-        android:textColor="@color/text_primary"
+        android:textColor="#DE000000"
         android:textSize="15sp" />
 
     <CheckBox
@@ -31,7 +31,7 @@
         android:layout_height="48dp"
         android:buttonTint="@color/btn_active"
         android:text="WAV（无损音质，文件较大）"
-        android:textColor="@color/text_primary"
+        android:textColor="#DE000000"
         android:textSize="15sp" />
 
     <CheckBox
@@ -40,7 +40,7 @@
         android:layout_height="48dp"
         android:buttonTint="@color/btn_active"
         android:text="MP3（通用性好）"
-        android:textColor="@color/text_primary"
+        android:textColor="#DE000000"
         android:textSize="15sp" />
 
     <TextView
