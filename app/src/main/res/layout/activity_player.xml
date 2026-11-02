@@ -255,27 +255,27 @@
 
                         <TextView
                             android:id="@+id/btnSetA"
-                            android:layout_width="32dp"
-                            android:layout_height="36dp"
+                            android:layout_width="44dp"
+                            android:layout_height="40dp"
                             android:gravity="center"
                             android:text="A"
                             android:textColor="@color/text_secondary"
-                            android:textSize="12sp"
+                            android:textSize="13sp"
                             android:textStyle="bold"
-                            android:background="@drawable/bg_control_btn"
+                            android:background="@drawable/bg_speed_btn"
                             android:clickable="true"
                             android:focusable="true" />
 
                         <TextView
                             android:id="@+id/btnSetB"
-                            android:layout_width="32dp"
-                            android:layout_height="36dp"
+                            android:layout_width="44dp"
+                            android:layout_height="40dp"
                             android:gravity="center"
                             android:text="B"
                             android:textColor="@color/text_secondary"
-                            android:textSize="12sp"
+                            android:textSize="13sp"
                             android:textStyle="bold"
-                            android:background="@drawable/bg_control_btn"
+                            android:background="@drawable/bg_speed_btn"
                             android:clickable="true"
                             android:focusable="true"
                             android:layout_marginStart="2dp" />

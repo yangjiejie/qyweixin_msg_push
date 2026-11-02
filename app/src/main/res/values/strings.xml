@@ -4,7 +4,7 @@
     <string name="no_videos">暂无视频文件</string>
     <string name="select_videos">选择视频</string>
     <string name="delete_confirm">确认删除所选文件？</string>
-    <string name="file_private">隐私视频</string>
+    <string name="file_private">非相册视频</string>
     <string name="speed">倍速</string>
     <string name="ab_loop">AB循环</string>
     <string name="set_a">设置A点</string>

@@ -76,6 +76,8 @@ class PlayerActivity : AppCompatActivity() {
     /** 是否显示内嵌软字幕（默认关闭，与原来“不渲染字幕”的行为一致） */
     private var subtitleEnabled = false
     private var isSingleLoop = true
+    /** 复用的 Toast 实例，避免连续点击时多个 Toast 排队导致提示“延迟”出现 */
+    private var tipToast: Toast? = null
     private var videoUri: Uri? = null
     private var isCurrentPrivacy = false
     private var videoFileName: String = ""
@@ -93,8 +95,6 @@ class PlayerActivity : AppCompatActivity() {
     private val hideHandler = Handler(Looper.getMainLooper())
     private var controlsVisible = false
     private var controlsPermanent = false
-    /** 是否因“点击屏幕显示控件”而自动暂停（隐藏控件时自动恢复播放） */
-    private var autoPausedForUi = false
     /**
      * 进度条 / AB循环轮询专用 Handler。
      * 注意：不能与 hideHandler 共用，否则 autoHideControls() 的
@@ -201,32 +201,50 @@ class PlayerActivity : AppCompatActivity() {
             if (!isSingleLoop) {
                 controlsPermanent = false
             }
-            Toast.makeText(this, if (isSingleLoop) "单视频循环：开" else "单视频循环：关", Toast.LENGTH_SHORT).show()
+            showTip(if (isSingleLoop) "单视频循环：开" else "单视频循环：关")
         }
 
         // 倍速 - 弹出选择框
         btnSpeed.setOnClickListener { showSpeedDialog() }
 
-        // AB循环 - 按钮A
+        // AB循环 - 按钮A：再次点击则取消已设置的A点
         btnSetA.setOnClickListener {
+            if (pointA >= 0) {
+                pointA = -1
+                btnSetA.setTextColor(getColor(R.color.text_secondary))
+                btnSetA.setBackgroundResource(R.drawable.bg_speed_btn)
+                isABLoopActive = false
+                btnClearAB.visibility = View.GONE
+                showTip("已取消A点")
+                return@setOnClickListener
+            }
             val pos = player?.currentPosition ?: return@setOnClickListener
             pointA = pos
             btnSetA.setTextColor(getColor(R.color.btn_active))
             btnSetA.setBackgroundColor(0x66E94560.toInt())
-            Toast.makeText(this, "A点已设置", Toast.LENGTH_SHORT).show()
+            showTip("A点已设置")
             // 如果B已存在且> A，自动启用AB循环
             checkAndEnableABLoop()
         }
 
-        // AB循环 - 按钮B
+        // AB循环 - 按钮B：再次点击则取消已设置的B点
         btnSetB.setOnClickListener {
+            if (pointB >= 0) {
+                pointB = -1
+                btnSetB.setTextColor(getColor(R.color.text_secondary))
+                btnSetB.setBackgroundResource(R.drawable.bg_speed_btn)
+                isABLoopActive = false
+                btnClearAB.visibility = View.GONE
+                showTip("已取消B点")
+                return@setOnClickListener
+            }
             val pos = player?.currentPosition ?: return@setOnClickListener
             if (pointA < 0) {
-                Toast.makeText(this, "请先设置A点", Toast.LENGTH_SHORT).show()
+                showTip("请先设置A点")
                 return@setOnClickListener
             }
             if (pos <= pointA + 500) {
-                Toast.makeText(this, "B点必须在A点之后", Toast.LENGTH_SHORT).show()
+                showTip("B点必须在A点之后")
                 return@setOnClickListener
             }
             pointB = pos
@@ -266,9 +284,10 @@ class PlayerActivity : AppCompatActivity() {
         btnAudio.setOnClickListener { requestAudioExtract() }
         btnVideoClip.setOnClickListener { requestVideoClip() }
 
-        // 手动隐藏控件（立即进入沉浸模式，如因点屏暂停过则恢复播放）
+        // 手动隐藏控件并恢复播放（进入沉浸模式专心观看；暂停状态下点此也可恢复播放）
         btnHideUi.setOnClickListener {
             hideHandler.removeCallbacksAndMessages(null)
+            playVideo()
             hideControls()
         }
 
@@ -335,12 +354,18 @@ class PlayerActivity : AppCompatActivity() {
 
     // ==================== AB循环 ====================
 
+    /** 复用同一个 Toast，避免连续点击时提示排队、出现“延迟感” */
+    private fun showTip(msg: String) {
+        tipToast?.cancel()
+        tipToast = Toast.makeText(this, msg, Toast.LENGTH_SHORT).apply { show() }
+    }
+
     private fun checkAndEnableABLoop() {
         if (pointA >= 0 && pointB >= 0 && pointB > pointA) {
             isABLoopActive = true
             btnClearAB.visibility = View.VISIBLE
             seekABLoop()
-            Toast.makeText(this, "AB循环已启用", Toast.LENGTH_SHORT).show()
+            showTip("AB循环已启用")
         }
     }
 
@@ -349,11 +374,11 @@ class PlayerActivity : AppCompatActivity() {
         pointB = -1L
         isABLoopActive = false
         btnSetA.setTextColor(getColor(R.color.text_secondary))
-        btnSetA.setBackgroundResource(R.drawable.bg_control_btn)
+        btnSetA.setBackgroundResource(R.drawable.bg_speed_btn)
         btnSetB.setTextColor(getColor(R.color.text_secondary))
-        btnSetB.setBackgroundResource(R.drawable.bg_control_btn)
+        btnSetB.setBackgroundResource(R.drawable.bg_speed_btn)
         btnClearAB.visibility = View.GONE
-        Toast.makeText(this, "AB循环已清除", Toast.LENGTH_SHORT).show()
+        showTip("AB循环已清除")
     }
 
     // ==================== 意图处理 ====================
@@ -490,7 +515,6 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private fun playVideo() {
-        autoPausedForUi = false // 用户手动播放，不再自动恢复
         controlsPermanent = false // 重播后恢复“无操作自动隐藏”行为
         player?.play()
         isPlaying = true
@@ -498,7 +522,6 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private fun pauseVideo() {
-        autoPausedForUi = false // 用户手动暂停，隐藏控件时不自动恢复
         player?.pause()
         isPlaying = false
         updatePlayPauseButton()
@@ -526,6 +549,10 @@ class PlayerActivity : AppCompatActivity() {
             maxOf(p.currentPosition - frameDuration, 0L)
         }
         p.seekTo(newPos)
+        // 暂停态逐帧时给出方向提示
+        if (!isPlaying) {
+            showTip(if (forward) "往前一帧" else "后退一帧")
+        }
     }
 
     private fun seekABLoop() {
@@ -538,12 +565,11 @@ class PlayerActivity : AppCompatActivity() {
 
     // ==================== 控件显隐 ====================
 
-    /** 用户点击屏幕：显示控件，并暂停播放（用户点屏通常是为了操作） */
+    /** 用户点击屏幕：显示控件，并暂停播放（用户点屏通常是为了操作/逐帧查看） */
     private fun showControlsForUser() {
         showControls()
         // GIF录制中不自动暂停：用户点屏多半是为了停止录制
         if (isPlaying && !isRecordingGif) {
-            autoPausedForUi = true
             player?.pause()
             isPlaying = false
             updatePlayPauseButton()
@@ -568,13 +594,8 @@ class PlayerActivity : AppCompatActivity() {
         btnFrameBackward.visibility = View.GONE
         // 沉浸模式：隐藏系统状态栏/导航栏，纯享观看
         hideSystemUi()
-        // 若之前是因“点屏显示控件”而暂停的，隐藏时自动恢复播放
-        if (autoPausedForUi) {
-            autoPausedForUi = false
-            player?.play()
-            isPlaying = true
-            updatePlayPauseButton()
-        }
+        // 注意：暂停后不会自动恢复播放。无论是手动暂停还是点屏显示控件时暂停，
+        // 都必须由用户点击「播放」按钮才继续播放（便于逐帧手动查看）。
     }
 
     private fun autoHideControls() {
@@ -886,7 +907,8 @@ class PlayerActivity : AppCompatActivity() {
             .setTitle("截取视频片段")
             .setMessage(
                 "区间: A(${formatTime(pointA)}) ~ B(${formatTime(pointB)})，约 ${seconds} 秒\n" +
-                        "将把这段视频（含音轨）保存为 MP4，直接混流不重新编码。\n" +
+                        "将把这段视频（含音轨）精确截取为 A~B 帧间的 MP4。\n" +
+                        "视频重新编码以保证起始帧精确落在 A 点（首帧为关键帧），音轨无损混流。\n" +
                         "保存位置: 内部存储/Movies/VideoWatch"
             )
             .setNegativeButton("取消", null)

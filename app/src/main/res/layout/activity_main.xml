@@ -69,7 +69,7 @@
             android:padding="8dp" />
     </FrameLayout>
 
-    <!-- TabLayout: 相册视频 / 隐私视频 -->
+    <!-- TabLayout: 相册视频 / 非相册视频 -->
     <com.google.android.material.tabs.TabLayout
         android:id="@+id/tabLayout"
         android:layout_width="0dp"
@@ -93,7 +93,7 @@
         <com.google.android.material.tabs.TabItem
             android:layout_width="wrap_content"
             android:layout_height="match_parent"
-            android:text="隐私视频" />
+            android:text="@string/file_private" />
     </com.google.android.material.tabs.TabLayout>
 
     <!-- 视频列表 -->
